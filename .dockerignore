@@ -1,0 +1,28 @@
+# VCS
+.git
+.gitignore
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node / front-end (if added later)
+node_modules/
+dist/
+build/
+
+# Django files
+staticfiles/
+media/
+db.sqlite3
+

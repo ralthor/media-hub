@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  web:
+    build: .
+    container_name: storage_web
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: ./docker/entrypoint.sh
+
