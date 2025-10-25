@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
+    'storage',
 ]
 
 MIDDLEWARE = [
@@ -124,7 +125,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Media files
 MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+_media_root_env = os.getenv('DJANGO_MEDIA_ROOT')
+if _media_root_env:
+    MEDIA_ROOT = Path(_media_root_env)
+else:
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 # CSRF trusted origins (optional; comma-separated list of origins)
 _trusted = os.getenv('DJANGO_TRUSTED_ORIGINS', '')
