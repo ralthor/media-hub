@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install curl to install uv
 RUN apt-get update \
+    && apt install -y ffmpeg \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,6 +34,9 @@ COPY . .
 # Ensure entrypoint has Unix line endings and is executable
 RUN sed -i 's/\r$//' docker/entrypoint.sh \
     && chmod +x docker/entrypoint.sh
+
+# Ensure /tmp exists with safe permissions (sticky bit)
+RUN mkdir -p /tmp && chmod 1777 /tmp
 
 # Expose Django port
 EXPOSE 8000

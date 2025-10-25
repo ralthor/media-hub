@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload a file</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 2rem; }
+    .container { max-width: 520px; }
+    .alert { padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+    .alert-success { background: #e6ffed; color: #03543f; border: 1px solid #2f855a; }
+    .alert-error { background: #ffe6e6; color: #7a1f1f; border: 1px solid #c53030; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; }
+    button { padding: 0.5rem 0.9rem; border-radius: 6px; border: 1px solid #1f2937; background: #111827; color: white; cursor: pointer; }
+    input[type=file] { margin-bottom: 1rem; }
+  </style>
+  <meta name="csrf-token" content="{% csrf_token %}">
+  <!-- csrf token meta included for clarity; the actual token is in the form -->
+  {% load static %}
+  {% load tz %}
+  {% load i18n %}
+  {% load humanize %}
+</head>
+<body>
+  <div class="container">
+    <h1>Upload a file</h1>
+
+    {% if success %}
+      <div class="alert alert-success">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <div class="card">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="file">Choose file:</label><br>
+        <input id="file" name="file" type="file" required>
+        <div>
+          <button type="submit">Upload</button>
+        </div>
+      </form>
+    </div>
+    <p style="margin-top:1rem">Route: <code>/upload/</code></p>
+  </div>
+</body>
+<script>
+  // No JS needed; plain form post.
+  // This stub is present for easy future enhancements.
+</script>
+</html>
+
