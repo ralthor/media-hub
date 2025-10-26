@@ -1,5 +1,6 @@
 from django.test import TestCase, Client
 from django.core.files.uploadedfile import SimpleUploadedFile
+from unittest.mock import patch
 
 
 class UploadViewTests(TestCase):
@@ -16,10 +17,18 @@ class UploadViewTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn(b'No file provided', resp.content)
 
-    def test_post_with_file_writes_and_returns_success(self):
+    @patch('storage.processes.upload_to_gcs_and_sign')
+    def test_post_with_file_uploads_and_returns_success(self, mock_process):
+        mock_process.return_value = {
+            'bucket': 'bucket-1',
+            'object_name': 'hello.txt',
+            'gs_uri': 'gs://bucket-1/hello.txt',
+            'signed_url': 'https://signed/url',
+        }
+
         uploaded = SimpleUploadedFile('hello.txt', b'hello world', content_type='text/plain')
         resp = self.client.post('/upload/', {'file': uploaded})
         self.assertEqual(resp.status_code, 200)
-        # Response should mention destination path and filename without hardcoding OS paths
         self.assertIn(b'Uploaded to ', resp.content)
         self.assertIn(b'hello.txt', resp.content)
+        self.assertIn(b'Temporary access link', resp.content)
