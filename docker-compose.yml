@@ -9,5 +9,5 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - ./secrets/gcs-key.json:/var/secrets/gcs-key.json:ro
     command: ./docker/entrypoint.sh
-
