@@ -38,9 +38,8 @@ def upload_to_gcs_and_sign(
         bucket_name=result["bucket"],
         expiration_seconds=expires_seconds,
         method="GET",
-        content_type=content_type,
+        content_type=None,
     )
 
     result["signed_url"] = signed_url
     return result
-
