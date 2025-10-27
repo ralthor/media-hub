@@ -257,6 +257,19 @@ def delete_object(object_name: str, *, bucket_name: Optional[str] = None) -> Non
     blob.delete()
 
 
+def download_file_as_string(
+    object_name: str,
+    *,
+    bucket_name: Optional[str] = None,
+) -> str:
+    """Download a GCS object and return its content as a string."""
+    bucket = get_bucket(bucket_name)
+    object_name = _apply_prefix(object_name)
+    blob = bucket.blob(object_name)
+    content = blob.download_as_text()
+    return content
+
+
 __all__ = [
     "get_gcs_client",
     "get_bucket",
@@ -267,5 +280,6 @@ __all__ = [
     "build_public_url",
     "object_exists",
     "delete_object",
+    "download_file_as_string",
 ]
 

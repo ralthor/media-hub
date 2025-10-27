@@ -7,16 +7,32 @@ from django.utils.text import get_valid_filename
 from django.conf import settings
 
 from . import processes
+from . import storage_util
 
 logger = logging.getLogger(__name__)
 
 
 def video_page(request: HttpRequest) -> HttpResponse:
-    # TODO: Populate 'signed_url' with a valid signed HLS URL:
-    # TODO: Read the HLS playlist from GCS, read the segments, and generate signed URLs for them
+    # Read manifest content from GCS and pass it to the template context.
+    manifest_object_name = 'output.m3u8'  # Example manifest file in GCS
+    bucket_name = getattr(settings, 'GCS_BUCKET_NAME', None)
+    logger.info(
+        "video_page: fetching manifest object=%s bucket=%s",
+        manifest_object_name,
+        bucket_name,
+    )
+    content = storage_util.download_file_as_string(
+        manifest_object_name,
+        bucket_name=bucket_name,
+    )
+    logger.info(
+        "video_page: fetched manifest length=%s characters",
+        len(content) if content is not None else 0,
+    )
     context = {
-        'signed_url': None,
+        'manifest_content': content,
     }
+    logger.info("video_page: rendering template with manifest")
     return render(request, 'video.html', context)
 
 
