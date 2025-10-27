@@ -16,9 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from .views import upload_file
+from .views import upload_file, video_page
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('upload/', upload_file, name='upload'),
+    path('video/', video_page, name='video'),
 ]

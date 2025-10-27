@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <body>
+    <video id="video" controls style="width:100%;max-width:900px"></video>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script>
+      // URL is provided by the Django view via context as `signed_url`.
+      const url = "{{ signed_url|default:''|escapejs }}";
+      const video = document.getElementById('video');
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Some browsers (Safari) support HLS natively
+        video.src = url;
+      } else if (Hls.isSupported()) {
+        const hls = new Hls({lowLatencyMode:false});
+        hls.loadSource(url);
+        hls.attachMedia(video);
+      } else {
+        alert('Your browser cannot play HLS.');
+      }
+    </script>
+  </body>
+</html>

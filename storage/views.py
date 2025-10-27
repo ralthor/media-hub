@@ -11,6 +11,15 @@ from . import processes
 logger = logging.getLogger(__name__)
 
 
+def video_page(request: HttpRequest) -> HttpResponse:
+    # TODO: Populate 'signed_url' with a valid signed HLS URL:
+    # TODO: Read the HLS playlist from GCS, read the segments, and generate signed URLs for them
+    context = {
+        'signed_url': None,
+    }
+    return render(request, 'video.html', context)
+
+
 def upload_file(request: HttpRequest) -> HttpResponse:
     logger.info("upload_file: received %s request", request.method)
     if request.method == 'POST':
