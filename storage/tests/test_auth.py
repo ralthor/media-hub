@@ -56,12 +56,11 @@ class AuthViewsTests(TestCase):
 
         # Verify user is logged out
         resp = self.client.get('/upload/')
-        # Not asserting auth requirements on upload view; simply ensure no crash
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp['Location'].startswith('/accounts/login/'))
 
     def test_password_reset_view_renders(self):
         resp = self.client.get('/accounts/password_reset/')
         self.assertEqual(resp.status_code, 200)
         # Contains a form with an email field
         self.assertContains(resp, 'name="email"')
-

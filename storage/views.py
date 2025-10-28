@@ -6,6 +6,7 @@ from django.shortcuts import render, redirect
 from django.utils.text import get_valid_filename
 from django.conf import settings
 from django.contrib.auth import logout
+from django.contrib.auth.decorators import login_required
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from . import processes
@@ -14,6 +15,7 @@ from . import storage_util
 logger = logging.getLogger(__name__)
 
 
+@login_required
 def video_page(request: HttpRequest) -> HttpResponse:
     # Read manifest content from GCS and pass it to the template context.
     manifest_object_name = 'output.m3u8'  # Example manifest file in GCS
@@ -38,6 +40,7 @@ def video_page(request: HttpRequest) -> HttpResponse:
     return render(request, 'video.html', context)
 
 
+@login_required
 def upload_file(request: HttpRequest) -> HttpResponse:
     logger.info("upload_file: received %s request", request.method)
     if request.method == 'POST':

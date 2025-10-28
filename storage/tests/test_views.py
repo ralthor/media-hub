@@ -1,11 +1,18 @@
 from django.test import TestCase, Client
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.contrib.auth import get_user_model
 from unittest.mock import patch
 
 
 class UploadViewTests(TestCase):
     def setUp(self):
         self.client = Client()
+        self.password = 'test-pass-12345'
+        self.user = get_user_model().objects.create_user(
+            email='uploader@example.com',
+            password=self.password,
+        )
+        self.client.login(username=self.user.email, password=self.password)
 
     def test_get_upload_page(self):
         resp = self.client.get('/upload/')
@@ -19,6 +26,12 @@ class UploadViewTests(TestCase):
         self.assertIn(b'No file provided', resp.content)
         combined_logs = '\n'.join(cm.output)
         self.assertIn('upload_file: no file provided in POST', combined_logs)
+
+    def test_upload_redirects_to_login_if_anonymous(self):
+        self.client.logout()
+        resp = self.client.get('/upload/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp['Location'].startswith('/accounts/login/'))
 
     @patch('storage.processes.upload_to_gcs_and_sign')
     def test_post_with_file_uploads_and_returns_success(self, mock_process):
@@ -40,11 +53,18 @@ class UploadViewTests(TestCase):
 class VideoViewTests(TestCase):
     def setUp(self):
         self.client = Client()
+        self.password = 'test-pass-54321'
+        self.user = get_user_model().objects.create_user(
+            email='viewer@example.com',
+            password=self.password,
+        )
 
     @patch('storage.storage_util.download_file_as_string')
     def test_video_page_renders_manifest_and_logs(self, mock_download):
         mock_manifest = '#EXTM3U\n#EXT-X-ENDLIST\n'
         mock_download.return_value = mock_manifest
+
+        self.client.login(username=self.user.email, password=self.password)
 
         with self.assertLogs('storage.views', level='INFO') as cm:
             resp = self.client.get('/video/')
@@ -58,3 +78,8 @@ class VideoViewTests(TestCase):
         self.assertIn('video_page: fetching manifest', combined_logs)
         self.assertIn('video_page: fetched manifest', combined_logs)
         self.assertIn('video_page: rendering template', combined_logs)
+
+    def test_video_requires_login(self):
+        resp = self.client.get('/video/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp['Location'].startswith('/accounts/login/'))

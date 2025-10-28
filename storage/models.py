@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid as _uuid
 from django.db import models
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
 
@@ -14,6 +15,11 @@ class Video(models.Model):
     - Storage location split into `bucket_name` and `folder` for portability.
     """
 
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="videos",
+    )
     # Assigned later during upload flow; kept nullable until set
     file_uuid = models.UUIDField(null=True, blank=True, unique=True)
 
@@ -33,6 +39,7 @@ class Video(models.Model):
         indexes = [
             models.Index(fields=["file_uuid"], name="video_uuid_idx"),
             models.Index(fields=["bucket_name", "folder"], name="video_loc_idx"),
+            models.Index(fields=["user", "-uploaded_at"], name="video_user_idx"),
         ]
         ordering = ["-uploaded_at", "id"]
 
