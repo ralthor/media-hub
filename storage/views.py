@@ -2,9 +2,11 @@ import os
 import tempfile
 import logging
 from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.utils.text import get_valid_filename
 from django.conf import settings
+from django.contrib.auth import logout
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from . import processes
 from . import storage_util
@@ -98,3 +100,20 @@ def upload_file(request: HttpRequest) -> HttpResponse:
     # GET -> render simple upload form
     logger.info("upload_file: rendering upload form (GET)")
     return render(request, 'upload.html')
+
+
+def logout_view(request: HttpRequest) -> HttpResponse:
+    """Log the user out via GET and redirect safely.
+
+    Needed because Django 5 defaults to POST-only logout.
+    Our tests and some UX flows expect GET support with `next`.
+    """
+    logout(request)
+    next_url = request.GET.get('next') or getattr(settings, 'LOGOUT_REDIRECT_URL', '/') or '/'
+    if not url_has_allowed_host_and_scheme(
+        next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        next_url = '/'
+    return redirect(next_url)

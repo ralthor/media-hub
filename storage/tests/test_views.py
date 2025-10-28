@@ -13,9 +13,12 @@ class UploadViewTests(TestCase):
         self.assertIn(b'Upload a file', resp.content)
 
     def test_post_without_file_returns_400(self):
-        resp = self.client.post('/upload/', {})
+        with self.assertLogs('storage.views', level='WARNING') as cm:
+            resp = self.client.post('/upload/', {})
         self.assertEqual(resp.status_code, 400)
         self.assertIn(b'No file provided', resp.content)
+        combined_logs = '\n'.join(cm.output)
+        self.assertIn('upload_file: no file provided in POST', combined_logs)
 
     @patch('storage.processes.upload_to_gcs_and_sign')
     def test_post_with_file_uploads_and_returns_success(self, mock_process):
