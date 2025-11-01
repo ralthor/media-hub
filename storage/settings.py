@@ -144,6 +144,9 @@ if _trusted:
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+LOGIN_URL = '/accounts/login/'
+LOGIN_REDIRECT_URL = '/dashboard/'
+
 
 # Logging
 LOGGING = {

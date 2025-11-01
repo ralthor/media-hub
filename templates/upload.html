@@ -22,7 +22,8 @@
               <label class="form-label" for="file">Choose file</label>
               <input class="form-control" id="file" name="file" type="file" required>
             </div>
-            <div class="d-flex justify-content-end gap-2">
+            <div class="d-flex justify-content-between gap-2">
+              <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}">Back to dashboard</a>
               <button class="btn btn-primary" type="submit">Upload</button>
             </div>
           </form>
