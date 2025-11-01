@@ -15,13 +15,15 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
-from .views import upload_file, video_page, logout_view
+from django.urls import include, path
+
+from .views import dashboard, logout_view, upload_file, video_page
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('upload/', upload_file, name='upload'),
     path('video/', video_page, name='video'),
+    path('dashboard/', dashboard, name='dashboard'),
     # Override logout to allow safe GET-based logout with ?next=
     path('accounts/logout/', logout_view, name='logout'),
     path('accounts/', include('django.contrib.auth.urls')),  # login, logout, password reset

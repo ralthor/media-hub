@@ -1,7 +1,11 @@
-from django.test import TestCase, Client
-from django.core.files.uploadedfile import SimpleUploadedFile
-from django.contrib.auth import get_user_model
+import uuid
 from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import Client, TestCase
+
+from storage.models import StoredFile
 
 
 class UploadViewTests(TestCase):
@@ -37,8 +41,8 @@ class UploadViewTests(TestCase):
     def test_post_with_file_uploads_and_returns_success(self, mock_process):
         mock_process.return_value = {
             'bucket': 'bucket-1',
-            'object_name': 'hello.txt',
-            'gs_uri': 'gs://bucket-1/hello.txt',
+            'object_name': 'user/00001/files/hello.txt',
+            'gs_uri': 'gs://bucket-1/user/00001/files/hello.txt',
             'signed_url': 'https://signed/url',
         }
 
@@ -48,7 +52,74 @@ class UploadViewTests(TestCase):
         self.assertIn(b'Uploaded to ', resp.content)
         self.assertIn(b'hello.txt', resp.content)
         self.assertIn(b'Temporary access link', resp.content)
+        mock_process.assert_called_once()
+        call_kwargs = mock_process.call_args.kwargs
+        expected_object = f"user/{self.user.id:05d}/files/hello.txt"
+        self.assertEqual(call_kwargs['object_name'], expected_object)
+        self.assertIn('bucket_name', call_kwargs)
+        stored = StoredFile.objects.get()
+        self.assertIsNone(stored.file_uuid)
+        self.assertEqual(stored.bucket_name, 'bucket-1')
+        self.assertEqual(stored.folder, expected_object)
+        self.assertEqual(stored.content_type, 'text/plain')
 
+    @patch('storage.views.uuid.uuid4')
+    @patch('storage.processes.upload_to_gcs_and_sign')
+    def test_video_upload_creates_video_entry(self, mock_process, mock_uuid):
+        fake_uuid = uuid.UUID('12345678-1234-5678-1234-567812345678')
+        mock_uuid.return_value = fake_uuid
+        expected_object = f"user/{self.user.id:05d}/{fake_uuid}/file"
+        mock_process.return_value = {
+            'bucket': 'videos-bucket',
+            'object_name': expected_object,
+            'gs_uri': f'gs://videos-bucket/{expected_object}',
+            'signed_url': 'https://signed/url',
+        }
+
+        uploaded = SimpleUploadedFile('clip.mp4', b'video-bytes', content_type='video/mp4')
+        resp = self.client.post('/upload/', {'file': uploaded})
+        self.assertEqual(resp.status_code, 200)
+        mock_process.assert_called_once()
+        call_kwargs = mock_process.call_args.kwargs
+        self.assertEqual(call_kwargs['object_name'], expected_object)
+        stored = StoredFile.objects.get()
+        self.assertEqual(stored.file_uuid, fake_uuid)
+        self.assertEqual(stored.folder, expected_object)
+        self.assertEqual(stored.bucket_name, 'videos-bucket')
+        self.assertEqual(stored.size_bytes, len(b'video-bytes'))
+        self.assertEqual(stored.original_filename, 'clip.mp4')
+        self.assertEqual(stored.content_type, 'video/mp4')
+
+    @patch('storage.views.uuid.uuid4')
+    @patch('storage.processes.upload_to_gcs_and_sign')
+    def test_video_upload_detected_by_guessed_type(self, mock_process, mock_uuid):
+        fake_uuid = uuid.UUID('fedcba98-7654-3210-fedc-ba9876543210')
+        mock_uuid.return_value = fake_uuid
+        expected_object = f"user/{self.user.id:05d}/{fake_uuid}/file"
+        mock_process.return_value = {
+            'bucket': 'videos-bucket',
+            'object_name': expected_object,
+            'gs_uri': f'gs://videos-bucket/{expected_object}',
+            'signed_url': 'https://signed/url',
+        }
+
+        with patch('storage.views.mimetypes.guess_type', return_value=('video/mpeg', None)) as mock_guess:
+            uploaded = SimpleUploadedFile(
+                'clip.custom',
+                b'video-bytes',
+                content_type='application/octet-stream',
+            )
+            resp = self.client.post('/upload/', {'file': uploaded})
+        self.assertEqual(resp.status_code, 200)
+        mock_process.assert_called_once()
+        mock_guess.assert_called()
+        stored = StoredFile.objects.get()
+        self.assertEqual(stored.file_uuid, fake_uuid)
+        self.assertEqual(stored.folder, expected_object)
+        self.assertEqual(stored.bucket_name, 'videos-bucket')
+        self.assertEqual(stored.size_bytes, len(b'video-bytes'))
+        self.assertEqual(stored.original_filename, 'clip.custom')
+        self.assertEqual(stored.content_type, 'video/mpeg')
 
 class VideoViewTests(TestCase):
     def setUp(self):
@@ -83,3 +154,37 @@ class VideoViewTests(TestCase):
         resp = self.client.get('/video/')
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp['Location'].startswith('/accounts/login/'))
+
+
+class DashboardViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.password = 'test-pass-67890'
+        self.user = get_user_model().objects.create_user(
+            email='dashboard@example.com',
+            password=self.password,
+        )
+
+    def test_dashboard_requires_login(self):
+        resp = self.client.get('/dashboard/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp['Location'].startswith('/accounts/login/'))
+
+    def test_dashboard_lists_uploaded_files(self):
+        self.client.login(username=self.user.email, password=self.password)
+        video_uuid = uuid.UUID('87654321-4321-8765-4321-876543218765')
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='sample.mp4',
+            content_type='video/mp4',
+        )
+        resp = self.client.get('/dashboard/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn('sample.mp4', body)
+        self.assertIn('videos-bucket', body)
+        self.assertIn('video', body)

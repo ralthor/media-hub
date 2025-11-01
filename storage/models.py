@@ -7,39 +7,35 @@ from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
 
 
-class Video(models.Model):
-    """Stores metadata about an uploaded video stored in object storage.
+class StoredFile(models.Model):
+    """Stores metadata about an uploaded file stored in object storage.
 
     Notes
-    - `file_uuid` will be assigned on upload; kept nullable for pre-create.
+    - `file_uuid` is primarily used for video uploads and remains optional.
     - Storage location split into `bucket_name` and `folder` for portability.
     """
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="videos",
+        related_name="stored_files",
     )
-    # Assigned later during upload flow; kept nullable until set
     file_uuid = models.UUIDField(null=True, blank=True, unique=True)
 
-    # Storage location
     bucket_name = models.CharField(max_length=255)
     folder = models.CharField(max_length=1024, blank=True, default="")
 
-    # File details
     size_bytes = models.BigIntegerField()
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
-    # Optional metadata
     original_filename = models.CharField(max_length=512, blank=True, default="")
     content_type = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         indexes = [
-            models.Index(fields=["file_uuid"], name="video_uuid_idx"),
-            models.Index(fields=["bucket_name", "folder"], name="video_loc_idx"),
-            models.Index(fields=["user", "-uploaded_at"], name="video_user_idx"),
+            models.Index(fields=["file_uuid"], name="storedfile_uuid_idx"),
+            models.Index(fields=["bucket_name", "folder"], name="storedfile_loc_idx"),
+            models.Index(fields=["user", "-uploaded_at"], name="storedfile_user_idx"),
         ]
         ordering = ["-uploaded_at", "id"]
 
@@ -48,7 +44,7 @@ class Video(models.Model):
         if self.folder:
             parts.append(self.folder)
         path = "/".join(parts)
-        return f"Video(id={self.pk}, uuid={self.file_uuid}, path={path}, size={self.size_bytes})"
+        return f"StoredFile(id={self.pk}, uuid={self.file_uuid}, path={path}, size={self.size_bytes})"
 
     @property
     def storage_path(self) -> str:
