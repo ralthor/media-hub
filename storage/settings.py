@@ -143,3 +143,37 @@ if _trusted:
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'console': {
+            'format': '[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'console',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'storage': {
+            'handlers': ['console'],
+            'level': os.getenv('STORAGE_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+    },
+}
