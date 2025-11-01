@@ -1,27 +1,39 @@
-<!doctype html>
-<html>
-  <body>
-    <video id="video" controls style="width:100%;max-width:900px"></video>
+{% extends "base.html" %}
 
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script>
+{% block title %}Video Playback · Storage Manager{% endblock %}
+
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+      <div class="ratio ratio-16x9 bg-dark rounded shadow-sm overflow-hidden">
+        <video id="video" controls class="w-100 h-100 bg-black"></video>
+      </div>
+      <p class="text-muted mt-3 small">If the video does not start automatically, ensure your browser supports HLS playback.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    (function () {
       const manifest = '{{ manifest_content|escapejs }}';
-
       const blob = new Blob([manifest], { type: 'application/vnd.apple.mpegurl' });
       const manifestUrl = URL.createObjectURL(blob);
 
-      const video = document.getElementById('video');
+      const videoElement = document.getElementById('video');
 
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Some browsers (Safari) support HLS natively
-        video.src = manifestUrl;
-      } else if (Hls.isSupported()) {
-        const hls = new Hls({lowLatencyMode:false});
+      if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+        videoElement.src = manifestUrl;
+      } else if (window.Hls && window.Hls.isSupported()) {
+        const hls = new Hls({ lowLatencyMode: false });
         hls.loadSource(manifestUrl);
-        hls.attachMedia(video);
+        hls.attachMedia(videoElement);
       } else {
+        // Future enhancement: replace alert with toast once Bootstrap JS utilities are used more widely.
         alert('Your browser cannot play HLS.');
       }
-    </script>
-  </body>
-</html>
+    })();
+  </script>
+{% endblock %}

@@ -1,60 +1,56 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>User Dashboard</title>
-  <style>
-    body { font-family: system-ui, Arial, sans-serif; margin: 2rem; background: #f9fafb; color: #111827; }
-    a { color: #2563eb; }
-    .container { max-width: 780px; margin: 0 auto; }
-    .card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.06); }
-    .actions { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-    .btn { display: inline-block; padding: 0.6rem 1.2rem; border-radius: 8px; border: 1px solid #2563eb; background: #1d4ed8; color: white; text-decoration: none; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    th, td { padding: 0.75rem 0.5rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
-    th { background: #f3f4f6; font-weight: 600; }
-    .empty { margin-top: 1rem; color: #6b7280; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1 style="margin-bottom: 1.5rem;">Dashboard</h1>
-    <div class="card">
-      <div class="actions">
-        <a class="btn" href="{% url 'logout' %}">Logout</a>
-        <a class="btn" href="{% url 'upload' %}">Upload New File</a>
+{% extends "base.html" %}
+
+{% block title %}Dashboard · Storage Manager{% endblock %}
+
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+        <div>
+          <h1 class="mb-1">Dashboard</h1>
+          <p class="text-muted mb-0">Review and manage your uploaded files.</p>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{% url 'logout' %}">Logout</a>
+          <a class="btn btn-primary" href="{% url 'upload' %}">Upload New File</a>
+        </div>
       </div>
-      <h2>Uploaded Files</h2>
-      {% if uploaded_files %}
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Object</th>
-              <th scope="col">Bucket</th>
-              <th scope="col">Category</th>
-              <th scope="col">Content Type</th>
-              <th scope="col">Uploaded</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for file in uploaded_files %}
-              <tr>
-                <td>{{ file.original_filename|default:"(unnamed)" }}</td>
-                <td><code>{{ file.object_name }}</code></td>
-                <td>{{ file.bucket }}</td>
-                <td>{{ file.category }}</td>
-                <td>{{ file.content_type|default:"n/a" }}</td>
-                <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <p class="empty">No uploads yet. Start by uploading a video or file.</p>
-      {% endif %}
+
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Uploaded Files</h2>
+          {% if uploaded_files %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Object</th>
+                    <th scope="col">Bucket</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Content Type</th>
+                    <th scope="col">Uploaded</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for file in uploaded_files %}
+                    <tr>
+                      <td>{{ file.original_filename|default:"(unnamed)" }}</td>
+                      <td><code>{{ file.object_name }}</code></td>
+                      <td>{{ file.bucket }}</td>
+                      <td>{{ file.category }}</td>
+                      <td>{{ file.content_type|default:"n/a" }}</td>
+                      <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">No uploads yet. Start by uploading a video or file.</p>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
-</body>
-</html>
+{% endblock %}

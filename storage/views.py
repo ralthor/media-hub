@@ -193,7 +193,7 @@ def _schedule_primary_upload(
         "upload_file: scheduling primary storage upload path=%s object=%s bucket=%s",
         local_path,
         object_name,
-        bucket_name or '(default)',
+        bucket_name,
     )
     result = storage_util.upload_local_file(
         local_path,
