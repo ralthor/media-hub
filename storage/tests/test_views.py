@@ -64,7 +64,7 @@ class UploadViewTests(TestCase):
         self.assertEqual(stored.content_type, 'text/plain')
 
     @patch('storage.views.storage_util.upload_local_file')
-    @patch('storage.views.uuid.uuid4')
+    @patch('storage.upload_helpers.uuid.uuid4')
     def test_video_upload_creates_video_entry(self, mock_uuid, mock_upload):
         fake_uuid = uuid.UUID('12345678-1234-5678-1234-567812345678')
         mock_uuid.return_value = fake_uuid
@@ -93,7 +93,7 @@ class UploadViewTests(TestCase):
         self.assertEqual(stored.content_type, 'video/mp4')
 
     @patch('storage.views.storage_util.upload_local_file')
-    @patch('storage.views.uuid.uuid4')
+    @patch('storage.upload_helpers.uuid.uuid4')
     def test_video_upload_detected_by_guessed_type(self, mock_uuid, mock_upload):
         fake_uuid = uuid.UUID('fedcba98-7654-3210-fedc-ba9876543210')
         mock_uuid.return_value = fake_uuid
@@ -104,7 +104,7 @@ class UploadViewTests(TestCase):
             'gs_uri': f'gs://videos-bucket/{expected_object}',
         }
 
-        with patch('storage.views.mimetypes.guess_type', return_value=('video/mpeg', None)) as mock_guess:
+        with patch('storage.upload_helpers.mimetypes.guess_type', return_value=('video/mpeg', None)) as mock_guess:
             uploaded = SimpleUploadedFile(
                 'clip.custom',
                 b'video-bytes',
