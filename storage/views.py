@@ -5,6 +5,8 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
+from dataclasses import asdict
+
 from . import storage_util
 from .models import StoredFile
 from .upload_helpers import (
@@ -86,29 +88,32 @@ def upload_file(request: HttpRequest) -> HttpResponse:
             context['error'] = f'Failed to write file: {e}'
             return render(request, 'upload.html', context, status=500)
 
-        # Then upload the file to GCS (synchronously for now)
+        # Queue the file for upload to GCS via Celery worker
         try:
-            schedule_primary_upload(
-                uploaded=uploaded,
+            task_result = schedule_primary_upload.delay(
                 local_path=dest_path,
-                classification=classification,
+                classification=asdict(classification),
                 object_name=object_name,
                 bucket_name=bucket_name,
-                user=request.user,
-                file_uuid=file_uuid,
+                user_id=request.user.id,
+                file_uuid=str(file_uuid) if file_uuid else None,
                 size_bytes=total_written,
-                context=context,
+                original_filename=getattr(uploaded, 'name', classification.filename),
             )
         except Exception as e:
-            logger.exception("upload_file: GCS upload failed: %s", e)
-            context['error'] = f'Failed to upload to storage: {e}'
+            logger.exception("upload_file: failed to enqueue primary upload task: %s", e)
+            context['error'] = 'Failed to enqueue background upload task.'
             return render(request, 'upload.html', context, status=500)
 
+        logger.info(
+            "upload_file: queued primary upload task task_id=%s path=%s object=%s bucket=%s",
+            getattr(task_result, 'id', None),
+            dest_path,
+            object_name,
+            bucket_name,
+        )
+
         context['success'] = f'Uploaded to {dest_path}'
-        if context.get('gcs_uri'):
-            logger.info("upload_file: GCS upload complete gs_uri=%s", context['gcs_uri'])
-        else:
-            logger.info("upload_file: GCS upload complete with unknown gs_uri")
         logger.info("upload_file: returning success response")
         return render(request, 'upload.html', context)
 

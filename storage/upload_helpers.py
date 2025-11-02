@@ -4,9 +4,12 @@ import os
 import tempfile
 import uuid
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
+
+from celery import shared_task
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.utils.text import get_valid_filename
 
 from . import storage_util
@@ -141,7 +144,7 @@ def _persist_stored_file(
     classification: UploadClassification,
     file_uuid: Optional[uuid.UUID],
     size_bytes: int,
-    uploaded,
+    original_filename: str,
 ):
     return StoredFile.objects.create(
         user=user,
@@ -149,13 +152,30 @@ def _persist_stored_file(
         bucket_name=bucket_name or '',
         folder=stored_object_name,
         size_bytes=size_bytes,
-        original_filename=getattr(uploaded, 'name', ''),
+        original_filename=original_filename,
         content_type=classification.effective_content_type or '',
     )
 
 
-def _schedule_video_processing(stored_file: StoredFile, local_path: str) -> None:
-    if not stored_file.file_uuid:
+def _classification_from_dict(payload: Dict[str, object]) -> UploadClassification:
+    return UploadClassification(
+        filename=str(payload.get('filename', '')),
+        effective_content_type=str(payload.get('effective_content_type', '')),
+        file_category=str(payload.get('file_category', '')),
+        is_video=bool(payload.get('is_video', False)),
+        is_photo=bool(payload.get('is_photo', False)),
+        file_ext=str(payload.get('file_ext', '')),
+    )
+
+
+@shared_task(bind=False)
+def _schedule_video_processing(stored_file_id: int, local_path: str) -> None:
+    stored_file = StoredFile.objects.filter(id=stored_file_id).only('id', 'file_uuid').first()
+    if not stored_file or not stored_file.file_uuid:
+        logger.info(
+            "upload_file: skipping video processing stored_file_id=%s (missing or no uuid)",
+            stored_file_id,
+        )
         return
     logger.info(
         "upload_file: queued video processing placeholder uuid=%s path=%s",
@@ -164,37 +184,53 @@ def _schedule_video_processing(stored_file: StoredFile, local_path: str) -> None
     )
 
 
-def _schedule_local_cleanup(stored_file: StoredFile, local_path: str) -> None:
+@shared_task(bind=False)
+def _schedule_local_cleanup(stored_file_id: int, local_path: str) -> None:
+    stored_file = StoredFile.objects.filter(id=stored_file_id).only('id').first()
+    if not stored_file:
+        logger.info(
+            "upload_file: cleanup skipped stored_file_id=%s (missing record)",
+            stored_file_id,
+        )
+        return
     logger.info(
         "upload_file: local cleanup pending for stored_file_id=%s path=%s",
-        stored_file.id,
+        stored_file_id,
         local_path,
     )
 
 
+@shared_task(bind=False)
 def schedule_primary_upload(
     *,
-    uploaded,
     local_path: str,
-    classification: UploadClassification,
+    classification: Dict[str, object],
     object_name: str,
     bucket_name: Optional[str],
-    user,
-    file_uuid: Optional[uuid.UUID],
+    user_id: int,
+    file_uuid: Optional[str],
     size_bytes: int,
-    context: Optional[dict] = None,
+    original_filename: str,
 ) -> None:
+    classification_obj = _classification_from_dict(classification)
+    user_model = get_user_model()
+    user = user_model.objects.filter(id=user_id).first()
+    if not user:
+        logger.warning("upload_file: user not found id=%s; skipping upload", user_id)
+        return
+    file_uuid_obj = uuid.UUID(file_uuid) if file_uuid else None
     logger.info(
-        "upload_file: scheduling primary storage upload path=%s object=%s bucket=%s",
+        "upload_file: running primary storage upload task path=%s object=%s bucket=%s user=%s",
         local_path,
         object_name,
         bucket_name,
+        user_id,
     )
     result = storage_util.upload_local_file(
         local_path,
         destination=object_name,
         bucket_name=bucket_name,
-        content_type=classification.effective_content_type or None,
+        content_type=classification_obj.effective_content_type or None,
     )
     stored_object_name = result.get('object_name') or object_name
     resolved_bucket = result.get('bucket') or bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
@@ -204,18 +240,19 @@ def schedule_primary_upload(
         logger.info(
             "upload_file: recording file metadata user=%s category=%s bucket=%s object=%s",
             user.id,
-            classification.file_category,
+            classification_obj.file_category,
             resolved_bucket,
             stored_object_name,
         )
+        original = original_filename or classification_obj.filename
         stored_file = _persist_stored_file(
             user=user,
             stored_object_name=stored_object_name,
             bucket_name=resolved_bucket,
-            classification=classification,
-            file_uuid=file_uuid,
+            classification=classification_obj,
+            file_uuid=file_uuid_obj,
             size_bytes=size_bytes,
-            uploaded=uploaded,
+            original_filename=original or classification_obj.filename,
         )
     else:
         logger.warning(
@@ -224,15 +261,6 @@ def schedule_primary_upload(
             stored_object_name,
         )
 
-    if context is not None:
-        context['object_name'] = stored_object_name
-        if resolved_bucket:
-            context['bucket'] = resolved_bucket
-            context['gcs_uri'] = result.get('gs_uri') or f"gs://{resolved_bucket}/{stored_object_name}"
-        else:
-            context['bucket'] = None
-            context['gcs_uri'] = None
-
     if stored_file:
-        _schedule_video_processing(stored_file, local_path)
-        _schedule_local_cleanup(stored_file, local_path)
+        _schedule_video_processing.delay(stored_file.id, local_path)
+        _schedule_local_cleanup.delay(stored_file.id, local_path)
