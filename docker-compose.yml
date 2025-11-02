@@ -11,3 +11,22 @@ services:
       - .:/app
       - ./secrets/gcs-key.json:/var/secrets/gcs-key.json:ro
     command: ./docker/entrypoint.sh
+    depends_on:
+      - redis
+
+  celery:
+    build: .
+    container_name: storage_celery
+    env_file: .env
+    command: celery -A storage worker -l info
+    volumes:
+      - .:/app
+      - ./secrets/gcs-key.json:/var/secrets/gcs-key.json:ro
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: storage_redis
+    ports:
+      - "6379:6379"
