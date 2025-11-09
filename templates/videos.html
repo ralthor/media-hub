@@ -43,7 +43,7 @@
                       <td>{{ video.uploaded_at|date:"Y-m-d H:i" }}</td>
                       <td class="d-flex gap-2">
                         {% if video.can_play %}
-                          <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' video.id %}">Play</a>
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' video.id %}" target="_blank" rel="noopener noreferrer">Play</a>
                         {% else %}
                           <span class="text-muted small align-self-center">Processing…</span>
                         {% endif %}
