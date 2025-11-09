@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from .views import dashboard, download_file, logout_view, upload_file, video_page
+from .views import dashboard, download_file, logout_view, play_video, upload_file, video_page
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -25,6 +25,7 @@ urlpatterns = [
     path('video/', video_page, name='video'),
     path('dashboard/', dashboard, name='dashboard'),
     path('files/<int:file_id>/download/', download_file, name='download_file'),
+    path('files/<int:file_id>/play/', play_video, name='play_video'),
     # Override logout to allow safe GET-based logout with ?next=
     path('accounts/logout/', logout_view, name='logout'),
     path('accounts/', include('django.contrib.auth.urls')),  # login, logout, password reset

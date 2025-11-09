@@ -151,6 +151,11 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             category = 'video'
         elif stored.content_type.startswith('image/'):
             category = 'photo'
+        can_play = bool(
+            category == 'video'
+            and stored.file_uuid
+            and stored.status == StoredFile.Status.READY
+        )
         uploaded_files.append(
             {
                 'id': stored.id,
@@ -162,6 +167,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 'category': category,
                 'file_uuid': stored.file_uuid,
                 'status': stored.status,
+                'can_play': can_play,
             }
         )
     context = {
@@ -222,6 +228,98 @@ def download_file(request: HttpRequest, file_id: int) -> HttpResponse:
         stored_file.folder,
     )
     return redirect(signed_url)
+
+
+@login_required
+def play_video(request: HttpRequest, file_id: int) -> HttpResponse:
+    stored_file = get_object_or_404(StoredFile, pk=file_id, user=request.user)
+    if not stored_file.file_uuid:
+        logger.warning(
+            "play_video: requested file is not a video file_id=%s",
+            stored_file.id,
+        )
+        return HttpResponse('Video playback is not available for this file.', status=404)
+
+    bucket_name = stored_file.bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
+    if not bucket_name:
+        logger.error("play_video: bucket missing for file_id=%s", stored_file.id)
+        return HttpResponse('Storage bucket is not configured.', status=500)
+
+    base_prefix = (stored_file.per_upload_prefix or '').strip('/')
+    if not base_prefix:
+        logger.warning("play_video: missing per-upload prefix file_id=%s", stored_file.id)
+        return HttpResponse('Segmented assets not available for this video.', status=404)
+
+    segmented_prefix = f"{base_prefix}/segmented"
+    manifest_object = f"{segmented_prefix}/output.m3u8"
+    try:
+        manifest_content = storage_util.download_file_as_string(
+            manifest_object,
+            bucket_name=bucket_name,
+        )
+    except Exception as exc:
+        logger.exception(
+            "play_video: failed to download manifest file_id=%s manifest=%s error=%s",
+            stored_file.id,
+            manifest_object,
+            exc,
+        )
+        return HttpResponse('Unable to fetch segmented manifest at the moment.', status=500)
+
+    if not manifest_content:
+        logger.warning(
+            "play_video: manifest missing or empty file_id=%s manifest=%s",
+            stored_file.id,
+            manifest_object,
+        )
+        return HttpResponse('Segmented manifest not available for this video.', status=404)
+
+    lines = manifest_content.splitlines()
+    had_trailing_newline = manifest_content.endswith(('\n', '\r'))
+
+    signed_lines = []
+    replacement_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or '://' in stripped:
+            signed_lines.append(line)
+            continue
+        segment_object = '/'.join(
+            part.strip('/') for part in (segmented_prefix, stripped) if part
+        )
+        try:
+            signed_url = storage_util.generate_signed_url(
+                segment_object,
+                bucket_name=bucket_name,
+            )
+        except Exception as exc:
+            logger.exception(
+                "play_video: failed to sign segment file_id=%s object=%s error=%s",
+                stored_file.id,
+                segment_object,
+                exc,
+            )
+            return HttpResponse('Unable to prepare playable manifest.', status=500)
+        signed_lines.append(signed_url)
+        replacement_count += 1
+
+    signed_manifest = "\n".join(signed_lines)
+    if had_trailing_newline:
+        signed_manifest += "\n"
+
+    padded_user_id = f"{stored_file.user_id:05d}"
+    download_name = f"user_{padded_user_id}_{stored_file.file_uuid}_segmented_output.m3u8"
+
+    logger.info(
+        "play_video: prepared signed manifest file_id=%s manifest=%s segments_signed=%s",
+        stored_file.id,
+        manifest_object,
+        replacement_count,
+    )
+
+    response = HttpResponse(signed_manifest, content_type='application/vnd.apple.mpegurl')
+    response['Content-Disposition'] = f'inline; filename="{download_name}"'
+    return response
 
 
 def logout_view(request: HttpRequest) -> HttpResponse:

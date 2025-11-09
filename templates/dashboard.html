@@ -31,6 +31,7 @@
                     <th scope="col">Status</th>
                     <th scope="col">Content Type</th>
                     <th scope="col">Uploaded</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -47,6 +48,13 @@
                       <td>{{ file.status }}</td>
                       <td>{{ file.content_type|default:"n/a" }}</td>
                       <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
+                      <td>
+                        {% if file.can_play %}
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' file.id %}">Play</a>
+                        {% else %}
+                          <span class="text-muted">&mdash;</span>
+                        {% endif %}
+                      </td>
                     </tr>
                   {% endfor %}
                 </tbody>
