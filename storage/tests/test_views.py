@@ -274,3 +274,56 @@ class DashboardViewTests(TestCase):
             expected_segment,
             bucket_name='videos-bucket',
         )
+
+
+class FileAccessControlTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.password = 'test-pass-access'
+        self.user = get_user_model().objects.create_user(
+            email='owner@example.com',
+            password=self.password,
+        )
+        self.other_user = get_user_model().objects.create_user(
+            email='other@example.com',
+            password='other-pass-123',
+        )
+        self.client.login(username=self.user.email, password=self.password)
+
+    def test_download_file_denies_other_users_asset(self):
+        stored = StoredFile.objects.create(
+            user=self.other_user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.other_user.id:05d}/files/private.txt',
+            size_bytes=64,
+            original_filename='private.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.READY,
+        )
+        with patch('storage.views.storage_util.generate_signed_url') as mock_generate:
+            resp = self.client.get(f'/files/{stored.id}/download/')
+
+        self.assertEqual(resp.status_code, 404)
+        mock_generate.assert_not_called()
+
+    def test_play_video_denies_other_users_asset(self):
+        video_uuid = uuid.UUID('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+        stored = StoredFile.objects.create(
+            user=self.other_user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.other_user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='secret.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+        )
+        with patch('storage.views.storage_util.download_file_as_string') as mock_download, patch(
+            'storage.views.storage_util.generate_signed_url'
+        ) as mock_generate:
+            resp = self.client.get(f'/files/{stored.id}/play/')
+
+        self.assertEqual(resp.status_code, 404)
+        mock_download.assert_not_called()
+        mock_generate.assert_not_called()
