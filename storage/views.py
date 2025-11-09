@@ -72,8 +72,21 @@ def upload_file(request: HttpRequest) -> HttpResponse:
             classification,
         )
 
+        stored_file = StoredFile.objects.create(
+            user=request.user,
+            file_uuid=file_uuid if classification.is_video else None,
+            bucket_name=bucket_name or '',
+            folder=object_name,
+            size_bytes=0,
+            original_filename=getattr(uploaded, 'name', classification.filename),
+            content_type=classification.effective_content_type or '',
+        )
+
         # First write to local filesystem (MEDIA_ROOT or temp dir)
-        _, dest_path = resolve_local_destination(classification.filename)
+        _, dest_path = resolve_local_destination(
+            classification.filename,
+            base_dir=stored_file.local_workdir,
+        )
 
         logger.info("upload_file: writing local file to %s", dest_path)
         try:
@@ -85,23 +98,27 @@ def upload_file(request: HttpRequest) -> HttpResponse:
             )
         except OSError as e:
             logger.exception("upload_file: local write failed: %s", e)
+            stored_file.advance_status(StoredFile.Status.ERROR)
             context['error'] = f'Failed to write file: {e}'
             return render(request, 'upload.html', context, status=500)
+
+        stored_file.size_bytes = total_written
+        stored_file.save(update_fields=['size_bytes'])
 
         # Queue the file for upload to GCS via Celery worker
         try:
             task_result = schedule_primary_upload.delay(
+                stored_file_id=stored_file.id,
                 local_path=dest_path,
                 classification=asdict(classification),
                 object_name=object_name,
                 bucket_name=bucket_name,
-                user_id=request.user.id,
-                file_uuid=str(file_uuid) if file_uuid else None,
                 size_bytes=total_written,
                 original_filename=getattr(uploaded, 'name', classification.filename),
             )
         except Exception as e:
             logger.exception("upload_file: failed to enqueue primary upload task: %s", e)
+            stored_file.advance_status(StoredFile.Status.ERROR)
             context['error'] = 'Failed to enqueue background upload task.'
             return render(request, 'upload.html', context, status=500)
 
@@ -143,6 +160,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 'content_type': stored.content_type,
                 'category': category,
                 'file_uuid': stored.file_uuid,
+                'status': stored.status,
             }
         )
     context = {

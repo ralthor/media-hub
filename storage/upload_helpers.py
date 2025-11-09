@@ -1,15 +1,16 @@
 import logging
 import mimetypes
 import os
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from celery import shared_task
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.utils.text import get_valid_filename
 
 from . import storage_util
@@ -115,8 +116,8 @@ def determine_storage_target(user_id: int, classification: UploadClassification)
     return object_name, file_uuid
 
 
-def resolve_local_destination(filename: str) -> Tuple[str, str]:
-    dest_dir = getattr(settings, 'MEDIA_ROOT', None) or tempfile.gettempdir()
+def resolve_local_destination(filename: str, *, base_dir: Optional[str] = None) -> Tuple[str, str]:
+    dest_dir = base_dir or getattr(settings, 'MEDIA_ROOT', None) or tempfile.gettempdir()
     dest_dir = str(dest_dir)
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, filename)
@@ -136,27 +137,6 @@ def write_upload_to_disk(uploaded, dest_path: str) -> int:
     return total_written
 
 
-def _persist_stored_file(
-    *,
-    user,
-    stored_object_name: str,
-    bucket_name: Optional[str],
-    classification: UploadClassification,
-    file_uuid: Optional[uuid.UUID],
-    size_bytes: int,
-    original_filename: str,
-):
-    return StoredFile.objects.create(
-        user=user,
-        file_uuid=file_uuid if classification.is_video else None,
-        bucket_name=bucket_name or '',
-        folder=stored_object_name,
-        size_bytes=size_bytes,
-        original_filename=original_filename,
-        content_type=classification.effective_content_type or '',
-    )
-
-
 def _classification_from_dict(payload: Dict[str, object]) -> UploadClassification:
     return UploadClassification(
         filename=str(payload.get('filename', '')),
@@ -170,97 +150,204 @@ def _classification_from_dict(payload: Dict[str, object]) -> UploadClassificatio
 
 @shared_task(bind=False)
 def _schedule_video_processing(stored_file_id: int, local_path: str) -> None:
-    stored_file = StoredFile.objects.filter(id=stored_file_id).only('id', 'file_uuid').first()
+    stored_file = (
+        StoredFile.objects.filter(id=stored_file_id)
+        .only('id', 'file_uuid', 'status')
+        .first()
+    )
     if not stored_file or not stored_file.file_uuid:
         logger.info(
             "upload_file: skipping video processing stored_file_id=%s (missing or no uuid)",
             stored_file_id,
         )
         return
-    logger.info(
-        "upload_file: queued video processing placeholder uuid=%s path=%s",
-        stored_file.file_uuid,
-        local_path,
+    current_rank = StoredFile.status_rank(stored_file.status)
+    if current_rank >= StoredFile.status_rank(StoredFile.Status.PROCESSING_HLS):
+        logger.info(
+            "upload_file: video processing already satisfied stored_file_id=%s status=%s",
+            stored_file_id,
+            stored_file.status,
+        )
+        _schedule_local_cleanup.delay(
+            stored_file_id,
+            stored_file.local_workdir,
+            final_status=StoredFile.Status.READY,
+        )
+        return
+
+    workdir = Path(stored_file.local_workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        stored_file.advance_status(StoredFile.Status.PROCESSING)
+        hls_dir = workdir / "hls"
+        hls_dir.mkdir(parents=True, exist_ok=True)
+        stored_file.advance_status(StoredFile.Status.PROCESSING_HLS)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception(
+            "upload_file: failed video processing setup stored_file_id=%s error=%s",
+            stored_file_id,
+            exc,
+        )
+        stored_file.advance_status(StoredFile.Status.ERROR)
+        return
+
+    _schedule_local_cleanup.delay(
+        stored_file_id,
+        str(workdir),
+        final_status=StoredFile.Status.READY,
     )
 
 
 @shared_task(bind=False)
-def _schedule_local_cleanup(stored_file_id: int, local_path: str) -> None:
-    stored_file = StoredFile.objects.filter(id=stored_file_id).only('id').first()
+def _schedule_local_cleanup(
+    stored_file_id: int,
+    workdir: str,
+    *,
+    final_status: Optional[str] = None,
+) -> None:
+    stored_file = StoredFile.objects.filter(id=stored_file_id).only('id', 'status').first()
     if not stored_file:
         logger.info(
             "upload_file: cleanup skipped stored_file_id=%s (missing record)",
             stored_file_id,
         )
         return
-    logger.info(
-        "upload_file: local cleanup pending for stored_file_id=%s path=%s",
-        stored_file_id,
-        local_path,
-    )
+    try:
+        stored_file.advance_status(
+            StoredFile.Status.DELETING,
+            allow_from=[StoredFile.Status.READY],
+        )
+    except ValueError:  # pragma: no cover - defensive
+        logger.exception(
+            "upload_file: invalid cleanup transition stored_file_id=%s current=%s",
+            stored_file_id,
+            stored_file.status,
+        )
+        return
+
+    path = Path(workdir)
+    try:
+        if path.exists():
+            media_root = Path(getattr(settings, 'MEDIA_ROOT', tempfile.gettempdir())).resolve()
+            try:
+                path.resolve().relative_to(media_root)
+            except ValueError:
+                logger.warning(
+                    "upload_file: refusing to delete outside media_root stored_file_id=%s path=%s",
+                    stored_file_id,
+                    path,
+                )
+            else:
+                shutil.rmtree(path, ignore_errors=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception(
+            "upload_file: cleanup failed stored_file_id=%s error=%s",
+            stored_file_id,
+            exc,
+        )
+        stored_file.advance_status(StoredFile.Status.ERROR)
+        return
+
+    if final_status and final_status in StoredFile.Status.values:
+        stored_file.advance_status(final_status)
 
 
 @shared_task(bind=False)
 def schedule_primary_upload(
     *,
+    stored_file_id: int,
     local_path: str,
     classification: Dict[str, object],
     object_name: str,
     bucket_name: Optional[str],
-    user_id: int,
-    file_uuid: Optional[str],
     size_bytes: int,
     original_filename: str,
 ) -> None:
     classification_obj = _classification_from_dict(classification)
-    user_model = get_user_model()
-    user = user_model.objects.filter(id=user_id).first()
-    if not user:
-        logger.warning("upload_file: user not found id=%s; skipping upload", user_id)
-        return
-    file_uuid_obj = uuid.UUID(file_uuid) if file_uuid else None
-    logger.info(
-        "upload_file: running primary storage upload task path=%s object=%s bucket=%s user=%s",
-        local_path,
-        object_name,
-        bucket_name,
-        user_id,
-    )
-    result = storage_util.upload_local_file(
-        local_path,
-        destination=object_name,
-        bucket_name=bucket_name,
-        content_type=classification_obj.effective_content_type or None,
-    )
-    stored_object_name = result.get('object_name') or object_name
-    resolved_bucket = result.get('bucket') or bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
-
-    stored_file = None
-    if resolved_bucket:
-        logger.info(
-            "upload_file: recording file metadata user=%s category=%s bucket=%s object=%s",
-            user.id,
-            classification_obj.file_category,
-            resolved_bucket,
-            stored_object_name,
-        )
-        original = original_filename or classification_obj.filename
-        stored_file = _persist_stored_file(
-            user=user,
-            stored_object_name=stored_object_name,
-            bucket_name=resolved_bucket,
-            classification=classification_obj,
-            file_uuid=file_uuid_obj,
-            size_bytes=size_bytes,
-            original_filename=original or classification_obj.filename,
-        )
-    else:
+    stored_file = StoredFile.objects.filter(id=stored_file_id).first()
+    if not stored_file:
         logger.warning(
-            "upload_file: skipping metadata persistence due to missing bucket user=%s object=%s",
-            user.id,
-            stored_object_name,
+            "upload_file: stored_file missing stored_file_id=%s; cannot upload",
+            stored_file_id,
+        )
+        return
+
+    workdir = Path(stored_file.local_workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    if not os.path.exists(local_path):
+        logger.error(
+            "upload_file: expected local path missing stored_file_id=%s path=%s",
+            stored_file_id,
+            local_path,
+        )
+        stored_file.advance_status(StoredFile.Status.ERROR)
+        return
+
+    resolved_bucket = bucket_name or stored_file.bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
+    destination = object_name
+
+    already_exists = False
+    if stored_file.folder and stored_file.bucket_name:
+        try:
+            already_exists = storage_util.object_exists(
+                stored_file.folder,
+                bucket_name=stored_file.bucket_name,
+            )
+        except Exception:  # pragma: no cover - best-effort check
+            already_exists = False
+
+    try:
+        if already_exists:
+            logger.info(
+                "upload_file: remote object already present stored_file_id=%s object=%s bucket=%s",
+                stored_file_id,
+                stored_file.folder,
+                stored_file.bucket_name,
+            )
+            result = {
+                'bucket': stored_file.bucket_name,
+                'object_name': stored_file.folder,
+            }
+        else:
+            result = storage_util.upload_local_file(
+                local_path,
+                destination=destination,
+                bucket_name=resolved_bucket,
+                content_type=classification_obj.effective_content_type or None,
+            )
+    except Exception as exc:
+        logger.exception(
+            "upload_file: failed primary upload stored_file_id=%s error=%s",
+            stored_file_id,
+            exc,
+        )
+        stored_file.advance_status(StoredFile.Status.ERROR)
+        return
+
+    stored_file.bucket_name = result.get('bucket') or resolved_bucket or stored_file.bucket_name
+    stored_file.folder = result.get('object_name') or stored_file.folder or destination
+    stored_file.size_bytes = size_bytes
+    stored_file.original_filename = original_filename or classification_obj.filename
+    stored_file.content_type = classification_obj.effective_content_type or ''
+    stored_file.save(
+        update_fields=[
+            'bucket_name',
+            'folder',
+            'size_bytes',
+            'original_filename',
+            'content_type',
+        ]
+    )
+
+    stored_file.advance_status(StoredFile.Status.UPLOAD_COMPLETE)
+
+    if classification_obj.is_video and stored_file.file_uuid:
+        _schedule_video_processing.delay(stored_file.id, local_path)
+    else:
+        _schedule_local_cleanup.delay(
+            stored_file.id,
+            stored_file.local_workdir,
+            final_status=StoredFile.Status.READY,
         )
 
-    if stored_file:
-        _schedule_video_processing.delay(stored_file.id, local_path)
-        _schedule_local_cleanup.delay(stored_file.id, local_path)

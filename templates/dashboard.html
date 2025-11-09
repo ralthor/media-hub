@@ -28,6 +28,7 @@
                     <th scope="col">Object</th>
                     <th scope="col">Bucket</th>
                     <th scope="col">Category</th>
+                    <th scope="col">Status</th>
                     <th scope="col">Content Type</th>
                     <th scope="col">Uploaded</th>
                   </tr>
@@ -39,6 +40,7 @@
                       <td><code>{{ file.object_name }}</code></td>
                       <td>{{ file.bucket }}</td>
                       <td>{{ file.category }}</td>
+                      <td>{{ file.status }}</td>
                       <td>{{ file.content_type|default:"n/a" }}</td>
                       <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
                     </tr>

@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from unittest.mock import ANY, patch
 
 from django.contrib.auth import get_user_model
@@ -63,6 +64,9 @@ class UploadViewTests(TestCase):
         self.assertEqual(stored.bucket_name, 'bucket-1')
         self.assertEqual(stored.folder, expected_object)
         self.assertEqual(stored.content_type, 'text/plain')
+        self.assertEqual(stored.status, StoredFile.Status.READY)
+        upload_path = Path(mock_upload.call_args[0][0])
+        self.assertEqual(upload_path.parent, Path(stored.local_workdir))
 
     @patch('storage.upload_helpers.storage_util.upload_local_file')
     @patch('storage.upload_helpers.uuid.uuid4')
@@ -92,6 +96,9 @@ class UploadViewTests(TestCase):
         self.assertEqual(stored.size_bytes, len(b'video-bytes'))
         self.assertEqual(stored.original_filename, 'clip.mp4')
         self.assertEqual(stored.content_type, 'video/mp4')
+        self.assertEqual(stored.status, StoredFile.Status.READY)
+        upload_path = Path(mock_upload.call_args[0][0])
+        self.assertEqual(upload_path.parent, Path(stored.local_workdir))
 
     @patch('storage.upload_helpers.storage_util.upload_local_file')
     @patch('storage.upload_helpers.uuid.uuid4')
@@ -127,6 +134,9 @@ class UploadViewTests(TestCase):
         self.assertEqual(stored.size_bytes, len(b'video-bytes'))
         self.assertEqual(stored.original_filename, 'clip.custom')
         self.assertEqual(stored.content_type, 'video/mpeg')
+        self.assertEqual(stored.status, StoredFile.Status.READY)
+        upload_path = Path(mock_upload.call_args[0][0])
+        self.assertEqual(upload_path.parent, Path(stored.local_workdir))
 
 class VideoViewTests(TestCase):
     def setUp(self):
@@ -188,6 +198,7 @@ class DashboardViewTests(TestCase):
             size_bytes=2048,
             original_filename='sample.mp4',
             content_type='video/mp4',
+            status=StoredFile.Status.READY,
         )
         resp = self.client.get('/dashboard/')
         self.assertEqual(resp.status_code, 200)
@@ -195,3 +206,4 @@ class DashboardViewTests(TestCase):
         self.assertIn('sample.mp4', body)
         self.assertIn('videos-bucket', body)
         self.assertIn('video', body)
+        self.assertIn('READY', body)
