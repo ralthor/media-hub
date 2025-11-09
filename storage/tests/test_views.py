@@ -213,6 +213,35 @@ class DashboardViewTests(TestCase):
         self.assertIn('video', body)
         self.assertIn('READY', body)
 
+    def test_dashboard_sort_by_name_ascending(self):
+        self.client.login(username=self.user.email, password=self.password)
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/b-name.txt',
+            size_bytes=128,
+            original_filename='zulu.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.READY,
+        )
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/a-name.txt',
+            size_bytes=128,
+            original_filename='alpha.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.READY,
+        )
+        resp = self.client.get('/?sort=name&direction=asc')
+        self.assertEqual(resp.status_code, 200)
+        ordered_names = [entry['original_filename'] for entry in resp.context['uploaded_files']]
+        self.assertEqual(ordered_names, ['alpha.txt', 'zulu.txt'])
+        self.assertEqual(resp.context['sorting']['current'], 'name')
+        self.assertEqual(resp.context['sorting']['direction'], 'asc')
+
     def test_dashboard_omits_deleted_files(self):
         self.client.login(username=self.user.email, password=self.password)
         StoredFile.objects.create(
@@ -294,6 +323,49 @@ class DashboardViewTests(TestCase):
         self.assertIn('old.txt', body)
         self.assertIn('Delete Permanently', body)
 
+    def test_bin_page_sort_by_category(self):
+        self.client.login(username=self.user.email, password=self.password)
+        now = timezone.now()
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/doc.txt',
+            size_bytes=10,
+            original_filename='doc.txt',
+            content_type='application/octet-stream',
+            status=StoredFile.Status.DELETING,
+            deleted_at=now,
+        )
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='photos-bucket',
+            folder=f'user/{self.user.id:05d}/files/photo.jpg',
+            size_bytes=10,
+            original_filename='photo.jpg',
+            content_type='image/jpeg',
+            status=StoredFile.Status.DELETING,
+            deleted_at=now,
+        )
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=uuid.UUID('12345678-1234-5678-1234-567812345678'),
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/files/video.mp4',
+            size_bytes=10,
+            original_filename='video.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.DELETING,
+            deleted_at=now,
+        )
+        resp = self.client.get('/bin/?sort=category&direction=asc')
+        self.assertEqual(resp.status_code, 200)
+        ordered_categories = [
+            entry['category'] for entry in resp.context['deleted_files']
+        ]
+        self.assertEqual(ordered_categories, ['file', 'photo', 'video'])
+
     @patch('storage.views.storage_util.delete_prefix', return_value=3)
     def test_purge_file_deletes_record_and_storage(self, mock_delete_prefix):
         self.client.login(username=self.user.email, password=self.password)
@@ -362,6 +434,35 @@ class DashboardViewTests(TestCase):
         body = resp.content.decode()
         self.assertIn('sample.mp4', body)
         self.assertNotIn('doc.pdf', body)
+
+    def test_video_library_sort_by_bucket_descending(self):
+        self.client.login(username=self.user.email, password=self.password)
+        later_uuid = uuid.UUID('aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb')
+        earlier_uuid = uuid.UUID('dddddddd-1111-2222-3333-cccccccccccc')
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=earlier_uuid,
+            bucket_name='alpha-bucket',
+            folder=f'user/{self.user.id:05d}/{earlier_uuid}/file',
+            size_bytes=1024,
+            original_filename='alpha.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+        )
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=later_uuid,
+            bucket_name='zulu-bucket',
+            folder=f'user/{self.user.id:05d}/{later_uuid}/file',
+            size_bytes=1024,
+            original_filename='zulu.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.PROCESSING,
+        )
+        resp = self.client.get('/videos/?sort=bucket&direction=desc')
+        self.assertEqual(resp.status_code, 200)
+        ordered_buckets = [entry['bucket'] for entry in resp.context['videos']]
+        self.assertEqual(ordered_buckets, ['zulu-bucket', 'alpha-bucket'])
 
     def test_video_library_ignores_deleted_files(self):
         self.client.login(username=self.user.email, password=self.password)

@@ -6,7 +6,8 @@ from urllib.parse import quote
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.db.models import Case, CharField, Value, When
+from django.http import HttpRequest, HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -26,14 +27,28 @@ from .upload_helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _category_from_content_type(content_type: str | None) -> str:
+    ctype = (content_type or '').lower()
+    if ctype.startswith('video/'):
+        return 'video'
+    if ctype.startswith('image/'):
+        return 'photo'
+    return 'file'
+
+
+_CATEGORY_SORT_EXPRESSION = Case(
+    When(content_type__startswith='video/', then=Value('video')),
+    When(content_type__startswith='image/', then=Value('photo')),
+    default=Value('file'),
+    output_field=CharField(),
+)
+
+
 def _serialize_file(stored: StoredFile) -> dict:
     """Return template-friendly metadata describing a StoredFile."""
-    ctype = (stored.content_type or '').lower()
-    category = 'file'
-    if ctype.startswith('video/'):
-        category = 'video'
-    elif ctype.startswith('image/'):
-        category = 'photo'
+    category = getattr(stored, 'category_label', None) or _category_from_content_type(
+        stored.content_type
+    )
 
     is_deleted = bool(stored.deleted_at)
     can_play = (
@@ -57,6 +72,75 @@ def _serialize_file(stored: StoredFile) -> dict:
         'is_deleted': is_deleted,
         'deleted_at': stored.deleted_at,
     }
+
+
+def _build_sort_query(params: QueryDict, sort_key: str, direction: str) -> str:
+    mutable = params.copy()
+    mutable['sort'] = sort_key
+    mutable['direction'] = direction
+    query = mutable.urlencode()
+    return f'?{query}' if query else '?'
+
+
+def _build_sorting_context(
+    request: HttpRequest,
+    sort_options: dict[str, dict],
+    active_key: str,
+    direction: str,
+) -> dict:
+    params = request.GET.copy()
+    options = {}
+    for key in sort_options.keys():
+        is_active = key == active_key
+        is_ascending = is_active and direction == 'asc'
+        next_direction = 'desc' if is_active and direction == 'asc' else 'asc'
+        target_direction = 'asc' if not is_active else next_direction
+        options[key] = {
+            'is_active': is_active,
+            'is_ascending': is_ascending,
+            'next_direction': next_direction,
+            'url': _build_sort_query(params, key, target_direction),
+        }
+    return {
+        'current': active_key,
+        'direction': direction,
+        'options': options,
+    }
+
+
+def _resolve_sorting(
+    request: HttpRequest,
+    sort_options: dict[str, dict],
+    default_key: str,
+    default_direction: str = 'desc',
+) -> tuple[str, str, dict]:
+    sort_key = request.GET.get('sort', default_key)
+    if sort_key not in sort_options:
+        sort_key = default_key
+    direction = request.GET.get('direction', default_direction).lower()
+    if direction not in ('asc', 'desc'):
+        direction = default_direction
+    sorting = _build_sorting_context(request, sort_options, sort_key, direction)
+    return sort_key, direction, sorting
+
+
+def _apply_sorting(
+    queryset,
+    sort_options: dict[str, dict],
+    sort_key: str,
+    direction: str,
+):
+    config = sort_options[sort_key]
+    annotation = config.get('annotation')
+    if annotation:
+        name, expression = annotation
+        queryset = queryset.annotate(**{name: expression})
+    field_name = config['field']
+    order_by = field_name if direction == 'asc' else f'-{field_name}'
+    extra_order = config.get('extra_order_by') or []
+    if isinstance(extra_order, str):
+        extra_order = [extra_order]
+    return queryset.order_by(order_by, *extra_order)
 
 
 @login_required
@@ -180,11 +264,33 @@ def upload_file(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
-    logger.info("dashboard: fetching uploaded files for user=%s", request.user.id)
-    user_files = (
-        StoredFile.objects.filter(user=request.user, deleted_at__isnull=True)
-        .order_by('-uploaded_at')
+    sort_options = {
+        'uploaded_at': {'field': 'uploaded_at'},
+        'name': {'field': 'original_filename'},
+        'status': {'field': 'status'},
+        'category': {
+            'field': 'category_label',
+            'annotation': ('category_label', _CATEGORY_SORT_EXPRESSION),
+        },
+        'content_type': {'field': 'content_type'},
+    }
+    sort_key, direction, sorting = _resolve_sorting(
+        request,
+        sort_options,
+        default_key='uploaded_at',
+        default_direction='desc',
     )
+    logger.info(
+        "dashboard: fetching uploaded files sort=%s direction=%s user=%s",
+        sort_key,
+        direction,
+        request.user.id,
+    )
+    user_files = StoredFile.objects.filter(
+        user=request.user,
+        deleted_at__isnull=True,
+    )
+    user_files = _apply_sorting(user_files, sort_options, sort_key, direction)
     uploaded_files = [_serialize_file(stored) for stored in user_files]
     deleted_total = (
         StoredFile.objects.filter(user=request.user, deleted_at__isnull=False)
@@ -193,34 +299,74 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     context = {
         'uploaded_files': uploaded_files,
         'deleted_total': deleted_total,
+        'sorting': sorting,
     }
     return render(request, 'dashboard.html', context)
 
 
 @login_required
 def video_library(request: HttpRequest) -> HttpResponse:
-    logger.info("video_library: fetching videos for user=%s", request.user.id)
-    videos = (
-        StoredFile.objects.filter(user=request.user, deleted_at__isnull=True)
-        .filter(content_type__startswith='video/')
-        .order_by('-uploaded_at')
+    sort_options = {
+        'uploaded_at': {'field': 'uploaded_at'},
+        'name': {'field': 'original_filename'},
+        'bucket': {'field': 'bucket_name'},
+        'status': {'field': 'status'},
+    }
+    sort_key, direction, sorting = _resolve_sorting(
+        request,
+        sort_options,
+        default_key='uploaded_at',
+        default_direction='desc',
     )
+    logger.info(
+        "video_library: fetching videos sort=%s direction=%s user=%s",
+        sort_key,
+        direction,
+        request.user.id,
+    )
+    videos = StoredFile.objects.filter(
+        user=request.user,
+        deleted_at__isnull=True,
+    ).filter(content_type__startswith='video/')
+    videos = _apply_sorting(videos, sort_options, sort_key, direction)
     entries = [_serialize_file(stored) for stored in videos]
     context = {
         'videos': entries,
+        'sorting': sorting,
     }
     return render(request, 'videos.html', context)
 
 
 @login_required
 def bin_page(request: HttpRequest) -> HttpResponse:
-    logger.info("bin_page: fetching deleted files for user=%s", request.user.id)
-    deleted_files = (
-        StoredFile.objects.filter(user=request.user, deleted_at__isnull=False)
-        .order_by('-deleted_at', '-uploaded_at')
+    sort_options = {
+        'deleted_at': {'field': 'deleted_at'},
+        'name': {'field': 'original_filename'},
+        'category': {
+            'field': 'category_label',
+            'annotation': ('category_label', _CATEGORY_SORT_EXPRESSION),
+        },
+    }
+    sort_key, direction, sorting = _resolve_sorting(
+        request,
+        sort_options,
+        default_key='deleted_at',
+        default_direction='desc',
     )
+    logger.info(
+        "bin_page: fetching deleted files sort=%s direction=%s user=%s",
+        sort_key,
+        direction,
+        request.user.id,
+    )
+    deleted_files = StoredFile.objects.filter(
+        user=request.user,
+        deleted_at__isnull=False,
+    )
+    deleted_files = _apply_sorting(deleted_files, sort_options, sort_key, direction)
     context = {
         'deleted_files': [_serialize_file(stored) for stored in deleted_files],
+        'sorting': sorting,
     }
     return render(request, 'bin.html', context)
 

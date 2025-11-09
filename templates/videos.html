@@ -23,10 +23,74 @@
               <table class="table table-striped align-middle mb-0">
                 <thead class="table-light">
                   <tr>
-                    <th scope="col">Name</th>
-                    <th scope="col">Bucket</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Uploaded</th>
+                    {% with option=sorting.options.name %}
+                      <th scope="col">
+                        <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
+                          Name
+                          {% if option.is_active %}
+                            <span aria-hidden="true">
+                              {% if option.is_ascending %}&#9650;{% else %}&#9660;{% endif %}
+                            </span>
+                            <span class="visually-hidden">
+                              Sorted {% if option.is_ascending %}ascending{% else %}descending{% endif %}. Activate to sort {% if option.is_ascending %}descending{% else %}ascending{% endif %}.
+                            </span>
+                          {% else %}
+                            <span class="visually-hidden">Sort ascending</span>
+                          {% endif %}
+                        </a>
+                      </th>
+                    {% endwith %}
+                    {% with option=sorting.options.bucket %}
+                      <th scope="col">
+                        <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
+                          Bucket
+                          {% if option.is_active %}
+                            <span aria-hidden="true">
+                              {% if option.is_ascending %}&#9650;{% else %}&#9660;{% endif %}
+                            </span>
+                            <span class="visually-hidden">
+                              Sorted {% if option.is_ascending %}ascending{% else %}descending{% endif %}. Activate to sort {% if option.is_ascending %}descending{% else %}ascending{% endif %}.
+                            </span>
+                          {% else %}
+                            <span class="visually-hidden">Sort ascending</span>
+                          {% endif %}
+                        </a>
+                      </th>
+                    {% endwith %}
+                    {% with option=sorting.options.status %}
+                      <th scope="col">
+                        <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
+                          Status
+                          {% if option.is_active %}
+                            <span aria-hidden="true">
+                              {% if option.is_ascending %}&#9650;{% else %}&#9660;{% endif %}
+                            </span>
+                            <span class="visually-hidden">
+                              Sorted {% if option.is_ascending %}ascending{% else %}descending{% endif %}. Activate to sort {% if option.is_ascending %}descending{% else %}ascending{% endif %}.
+                            </span>
+                          {% else %}
+                            <span class="visually-hidden">Sort ascending</span>
+                          {% endif %}
+                        </a>
+                      </th>
+                    {% endwith %}
+                    {% with option=sorting.options.uploaded_at %}
+                      <th scope="col">
+                        <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
+                          Uploaded
+                          {% if option.is_active %}
+                            <span aria-hidden="true">
+                              {% if option.is_ascending %}&#9650;{% else %}&#9660;{% endif %}
+                            </span>
+                            <span class="visually-hidden">
+                              Sorted {% if option.is_ascending %}ascending{% else %}descending{% endif %}. Activate to sort {% if option.is_ascending %}descending{% else %}ascending{% endif %}.
+                            </span>
+                          {% else %}
+                            <span class="visually-hidden">Sort ascending</span>
+                          {% endif %}
+                        </a>
+                      </th>
+                    {% endwith %}
                     <th scope="col">Actions</th>
                   </tr>
                 </thead>
