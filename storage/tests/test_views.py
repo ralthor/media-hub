@@ -208,6 +208,36 @@ class DashboardViewTests(TestCase):
         self.assertIn('video', body)
         self.assertIn('READY', body)
 
+    def test_video_library_lists_only_videos(self):
+        self.client.login(username=self.user.email, password=self.password)
+        video_uuid = uuid.UUID('11111111-2222-3333-4444-555555555555')
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='sample.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+        )
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/doc.pdf',
+            size_bytes=1024,
+            original_filename='doc.pdf',
+            content_type='application/pdf',
+            status=StoredFile.Status.READY,
+        )
+
+        resp = self.client.get('/videos/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn('sample.mp4', body)
+        self.assertNotIn('doc.pdf', body)
+
     @patch('storage.views.storage_util.generate_signed_url')
     @patch('storage.views.storage_util.download_file_as_string')
     def test_play_video_returns_signed_manifest(self, mock_download, mock_generate):

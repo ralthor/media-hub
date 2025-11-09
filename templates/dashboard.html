@@ -10,8 +10,9 @@
           <h1 class="mb-1">Dashboard</h1>
           <p class="text-muted mb-0">Review and manage your uploaded files.</p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
           <a class="btn btn-outline-secondary" href="{% url 'logout' %}">Logout</a>
+          <a class="btn btn-outline-primary" href="{% url 'video_library' %}">View Videos</a>
           <a class="btn btn-primary" href="{% url 'upload' %}">Upload New File</a>
         </div>
       </div>

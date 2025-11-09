@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Videos · Storage Manager{% endblock %}
+
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-12 col-xl-9">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+        <div>
+          <h1 class="mb-1">My Videos</h1>
+          <p class="text-muted mb-0">Play or download your processed video uploads.</p>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}">Back to Dashboard</a>
+          <a class="btn btn-primary" href="{% url 'upload' %}">Upload New Video</a>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-body">
+          {% if videos %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Bucket</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Uploaded</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for video in videos %}
+                    <tr title="Object: {{ video.object_name }}">
+                      <td>
+                        <a href="{% url 'download_file' video.id %}" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+                          {{ video.original_filename|default:"(unnamed)" }}
+                        </a>
+                      </td>
+                      <td>{{ video.bucket }}</td>
+                      <td>{{ video.status }}</td>
+                      <td>{{ video.uploaded_at|date:"Y-m-d H:i" }}</td>
+                      <td class="d-flex gap-2">
+                        {% if video.can_play %}
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' video.id %}">Play</a>
+                        {% else %}
+                          <span class="text-muted small align-self-center">Processing…</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">No video uploads yet. Start by uploading an MP4 or other supported video.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -17,13 +17,14 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from .views import dashboard, download_file, logout_view, play_video, upload_file, video_page
+from .views import dashboard, download_file, logout_view, play_video, upload_file, video_library, video_page
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('upload/', upload_file, name='upload'),
     path('video/', video_page, name='video'),
     path('dashboard/', dashboard, name='dashboard'),
+    path('videos/', video_library, name='video_library'),
     path('files/<int:file_id>/download/', download_file, name='download_file'),
     path('files/<int:file_id>/play/', play_video, name='play_video'),
     # Override logout to allow safe GET-based logout with ?next=

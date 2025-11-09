@@ -176,6 +176,36 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     return render(request, 'dashboard.html', context)
 
 
+@login_required
+def video_library(request: HttpRequest) -> HttpResponse:
+    logger.info("video_library: fetching videos for user=%s", request.user.id)
+    videos = (
+        StoredFile.objects.filter(user=request.user)
+        .filter(content_type__startswith='video/')
+        .order_by('-uploaded_at')
+    )
+    entries = []
+    for stored in videos:
+        can_play = bool(stored.file_uuid and stored.status == StoredFile.Status.READY)
+        entries.append(
+            {
+                'id': stored.id,
+                'bucket': stored.bucket_name,
+                'object_name': stored.folder,
+                'original_filename': stored.original_filename,
+                'uploaded_at': stored.uploaded_at,
+                'content_type': stored.content_type,
+                'status': stored.status,
+                'file_uuid': stored.file_uuid,
+                'can_play': can_play,
+            }
+        )
+    context = {
+        'videos': entries,
+    }
+    return render(request, 'videos.html', context)
+
+
 def _pick_download_filename(stored_file: StoredFile) -> str:
     """Choose a reasonable filename for download headers."""
     candidates = [
