@@ -341,6 +341,30 @@ def purge_file(request: HttpRequest, file_id: int) -> JsonResponse:
     return JsonResponse({'status': 'ok', 'removed_objects': removed_objects})
 
 
+@login_required
+@require_POST
+def restore_file(request: HttpRequest, file_id: int) -> JsonResponse:
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=False,
+    )
+    previous_status = stored_file.status
+    stored_file.deleted_at = None
+    if previous_status == StoredFile.Status.DELETING:
+        stored_file.status = StoredFile.Status.READY
+    stored_file.save(update_fields=['deleted_at', 'status'])
+    logger.info(
+        "restore_file: restored file_id=%s user=%s (status %s -> %s)",
+        stored_file.id,
+        request.user.id,
+        previous_status,
+        stored_file.status,
+    )
+    return JsonResponse({'status': 'ok'})
+
+
 def _pick_download_filename(stored_file: StoredFile) -> str:
     """Choose a reasonable filename for download headers."""
     candidates = [

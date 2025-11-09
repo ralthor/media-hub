@@ -310,6 +310,25 @@ class DashboardViewTests(TestCase):
         self.assertFalse(StoredFile.objects.filter(id=stored.id).exists())
         mock_delete_prefix.assert_called_once()
 
+    def test_restore_file_clears_deleted_at(self):
+        self.client.login(username=self.user.email, password=self.password)
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/report.pdf',
+            size_bytes=256,
+            original_filename='report.pdf',
+            content_type='application/pdf',
+            status=StoredFile.Status.DELETING,
+            deleted_at=timezone.now(),
+        )
+        resp = self.client.post(f'/bin/files/{stored.id}/restore/')
+        self.assertEqual(resp.status_code, 200)
+        stored.refresh_from_db()
+        self.assertIsNone(stored.deleted_at)
+        self.assertEqual(stored.status, StoredFile.Status.READY)
+
     def test_video_library_lists_only_videos(self):
         self.client.login(username=self.user.email, password=self.password)
         video_uuid = uuid.UUID('11111111-2222-3333-4444-555555555555')

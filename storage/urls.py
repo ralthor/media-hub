@@ -25,6 +25,7 @@ from .views import (
     logout_view,
     play_video,
     purge_file,
+    restore_file,
     rename_file,
     upload_file,
     video_library,
@@ -44,6 +45,7 @@ urlpatterns = [
     path('files/<int:file_id>/rename/', rename_file, name='rename_file'),
     path('files/<int:file_id>/delete/', delete_file, name='delete_file'),
     path('bin/files/<int:file_id>/purge/', purge_file, name='purge_file'),
+    path('bin/files/<int:file_id>/restore/', restore_file, name='restore_file'),
     # Override logout to allow safe GET-based logout with ?next=
     path('accounts/logout/', logout_view, name='logout'),
     path('accounts/', include('django.contrib.auth.urls')),  # login, logout, password reset

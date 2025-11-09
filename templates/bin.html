@@ -32,22 +32,32 @@
                 </thead>
                 <tbody>
                   {% for file in deleted_files %}
-                    <tr>
-                      <td>{{ file.original_filename|default:"(unnamed)" }}</td>
-                      <td>{{ file.deleted_at|date:"Y-m-d H:i" }}</td>
-                      <td>{{ file.category }}</td>
-                      <td>
-                        <button
-                          type="button"
-                          class="btn btn-sm btn-outline-danger js-purge-file"
-                          data-purge-url="{% url 'purge_file' file.id %}"
-                          data-file-name="{{ file.original_filename|default:'this file' }}"
-                        >
-                          Delete Permanently
-                        </button>
-                      </td>
-                    </tr>
-                  {% endfor %}
+                  <tr>
+                    <td>{{ file.original_filename|default:"(unnamed)" }}</td>
+                    <td>{{ file.deleted_at|date:"Y-m-d H:i" }}</td>
+                    <td>{{ file.category }}</td>
+                    <td>
+                        <div class="d-flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-success js-restore-file"
+                            data-restore-url="{% url 'restore_file' file.id %}"
+                            data-file-name="{{ file.original_filename|default:'this file' }}"
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger js-purge-file"
+                            data-purge-url="{% url 'purge_file' file.id %}"
+                            data-file-name="{{ file.original_filename|default:'this file' }}"
+                          >
+                            Delete Permanently
+                          </button>
+                        </div>
+                    </td>
+                  </tr>
+                {% endfor %}
                 </tbody>
               </table>
             </div>
@@ -78,49 +88,81 @@
         return;
       }
 
-      const bindButtons = function () {
-        document.querySelectorAll('.js-purge-file').forEach((button) => {
-          button.addEventListener('click', () => {
-            const fileName = button.dataset.fileName || 'this file';
-            if (!window.confirm(`Delete ${fileName} forever? This cannot be undone.`)) {
-              return;
+      const handleEmptyState = function () {
+        if (!document.querySelector('.js-purge-file')) {
+          const tableWrapper = document.querySelector('.table-responsive');
+          if (tableWrapper) {
+            tableWrapper.remove();
+          }
+          const existingMessage = document.querySelector('[data-empty-message]');
+          if (!existingMessage) {
+            const container = document.createElement('p');
+            container.className = 'text-muted mb-0';
+            container.setAttribute('data-empty-message', 'true');
+            container.textContent = 'Your bin is empty.';
+            const cardBody = document.querySelector('.card-body');
+            if (cardBody) {
+              cardBody.appendChild(container);
             }
-            button.disabled = true;
-            fetchWithCsrf(button.dataset.purgeUrl, { method: 'POST' })
-              .then((resp) => {
-                if (!resp.ok) {
-                  return resp.text().then((text) => Promise.reject(text || 'Unable to delete.'));
-                }
-                return resp.json();
-              })
-              .then(() => {
-                const row = button.closest('tr');
-                if (row) {
-                  row.remove();
-                }
-                if (!document.querySelector('.js-purge-file')) {
-                  const tableWrapper = document.querySelector('.table-responsive');
-                  if (tableWrapper) {
-                    tableWrapper.remove();
-                  }
-                  const container = document.createElement('p');
-                  container.className = 'text-muted mb-0';
-                  container.textContent = 'Your bin is empty.';
-                  const cardBody = document.querySelector('.card-body');
-                  if (cardBody) {
-                    cardBody.appendChild(container);
-                  }
-                }
-              })
-              .catch((err) => {
-                window.alert(typeof err === 'string' ? err : 'Unable to remove the file.');
-                button.disabled = false;
-              });
-          });
-        });
+          }
+        }
       };
 
-      bindButtons();
+      document.querySelectorAll('.js-purge-file').forEach((button) => {
+        button.addEventListener('click', () => {
+          const fileName = button.dataset.fileName || 'this file';
+          if (!window.confirm(`Delete ${fileName} forever? This cannot be undone.`)) {
+            return;
+          }
+          button.disabled = true;
+          fetchWithCsrf(button.dataset.purgeUrl, { method: 'POST' })
+            .then((resp) => {
+              if (!resp.ok) {
+                return resp.text().then((text) => Promise.reject(text || 'Unable to delete.'));
+              }
+              return resp.json();
+            })
+            .then(() => {
+              const row = button.closest('tr');
+              if (row) {
+                row.remove();
+              }
+              handleEmptyState();
+            })
+            .catch((err) => {
+              window.alert(typeof err === 'string' ? err : 'Unable to remove the file.');
+              button.disabled = false;
+            });
+        });
+      });
+
+      document.querySelectorAll('.js-restore-file').forEach((button) => {
+        button.addEventListener('click', () => {
+          const fileName = button.dataset.fileName || 'this file';
+          if (!window.confirm(`Restore ${fileName}?`)) {
+            return;
+          }
+          button.disabled = true;
+          fetchWithCsrf(button.dataset.restoreUrl, { method: 'POST' })
+            .then((resp) => {
+              if (!resp.ok) {
+                return resp.text().then((text) => Promise.reject(text || 'Unable to restore.'));
+              }
+              return resp.json();
+            })
+            .then(() => {
+              const row = button.closest('tr');
+              if (row) {
+                row.remove();
+              }
+              handleEmptyState();
+            })
+            .catch((err) => {
+              window.alert(typeof err === 'string' ? err : 'Unable to restore the file.');
+              button.disabled = false;
+            });
+        });
+      });
     })();
   </script>
 {% endblock %}
