@@ -25,8 +25,6 @@
                 <thead class="table-light">
                   <tr>
                     <th scope="col">Name</th>
-                    <th scope="col">Object</th>
-                    <th scope="col">Bucket</th>
                     <th scope="col">Category</th>
                     <th scope="col">Status</th>
                     <th scope="col">Content Type</th>
@@ -36,20 +34,18 @@
                 </thead>
                 <tbody>
                   {% for file in uploaded_files %}
-                    <tr>
+                    <tr title="Object: {{ file.object_name }} / Bucket: {{ file.bucket }}">
                       <td>
-                        <a href="{% url 'download_file' file.id %}" class="text-decoration-none">
+                        <a href="{% url 'download_file' file.id %}" class="text-decoration-none" target="_blank" rel="noopener noreferrer">
                           {{ file.original_filename|default:"(unnamed)" }}
                         </a>
                       </td>
-                      <td><code>{{ file.object_name }}</code></td>
-                      <td>{{ file.bucket }}</td>
                       <td>{{ file.category }}</td>
                       <td>{{ file.status }}</td>
                       <td>{{ file.content_type|default:"n/a" }}</td>
                       <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
                       <td>
-                        {% if file.can_play %}
+                        {% if file.can_play and file.status == 'READY' %}
                           <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' file.id %}">Play</a>
                         {% else %}
                           <span class="text-muted">&mdash;</span>
