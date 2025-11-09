@@ -257,6 +257,17 @@ def delete_object(object_name: str, *, bucket_name: Optional[str] = None) -> Non
     blob.delete()
 
 
+def delete_prefix(prefix: str, *, bucket_name: Optional[str] = None) -> int:
+    """Delete all objects under the given prefix. Returns count deleted."""
+    bucket = get_bucket(bucket_name)
+    object_prefix = _apply_prefix(prefix)
+    deleted = 0
+    for blob in bucket.list_blobs(prefix=object_prefix):
+        blob.delete()
+        deleted += 1
+    return deleted
+
+
 def download_file_as_string(
     object_name: str,
     *,
@@ -280,6 +291,6 @@ __all__ = [
     "build_public_url",
     "object_exists",
     "delete_object",
+    "delete_prefix",
     "download_file_as_string",
 ]
-

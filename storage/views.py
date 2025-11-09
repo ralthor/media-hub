@@ -1,12 +1,17 @@
 import logging
+import os
+from dataclasses import asdict
 from urllib.parse import quote
+
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
-from dataclasses import asdict
+from django.utils.text import get_valid_filename
+from django.views.decorators.http import require_POST
 
 from . import storage_util
 from .models import StoredFile
@@ -19,6 +24,39 @@ from .upload_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_file(stored: StoredFile) -> dict:
+    """Return template-friendly metadata describing a StoredFile."""
+    ctype = (stored.content_type or '').lower()
+    category = 'file'
+    if ctype.startswith('video/'):
+        category = 'video'
+    elif ctype.startswith('image/'):
+        category = 'photo'
+
+    is_deleted = bool(stored.deleted_at)
+    can_play = (
+        category == 'video'
+        and stored.file_uuid
+        and stored.status == StoredFile.Status.READY
+        and not is_deleted
+    )
+
+    return {
+        'id': stored.id,
+        'bucket': stored.bucket_name,
+        'object_name': stored.folder,
+        'original_filename': stored.original_filename,
+        'uploaded_at': stored.uploaded_at,
+        'content_type': stored.content_type,
+        'category': category,
+        'file_uuid': stored.file_uuid,
+        'status': stored.status,
+        'can_play': can_play,
+        'is_deleted': is_deleted,
+        'deleted_at': stored.deleted_at,
+    }
 
 
 @login_required
@@ -143,35 +181,18 @@ def upload_file(request: HttpRequest) -> HttpResponse:
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
     logger.info("dashboard: fetching uploaded files for user=%s", request.user.id)
-    user_files = StoredFile.objects.filter(user=request.user).order_by('-uploaded_at')
-    uploaded_files = []
-    for stored in user_files:
-        category = 'file'
-        if stored.content_type.startswith('video/'):
-            category = 'video'
-        elif stored.content_type.startswith('image/'):
-            category = 'photo'
-        can_play = bool(
-            category == 'video'
-            and stored.file_uuid
-            and stored.status == StoredFile.Status.READY
-        )
-        uploaded_files.append(
-            {
-                'id': stored.id,
-                'bucket': stored.bucket_name,
-                'object_name': stored.folder,
-                'original_filename': stored.original_filename,
-                'uploaded_at': stored.uploaded_at,
-                'content_type': stored.content_type,
-                'category': category,
-                'file_uuid': stored.file_uuid,
-                'status': stored.status,
-                'can_play': can_play,
-            }
-        )
+    user_files = (
+        StoredFile.objects.filter(user=request.user, deleted_at__isnull=True)
+        .order_by('-uploaded_at')
+    )
+    uploaded_files = [_serialize_file(stored) for stored in user_files]
+    deleted_total = (
+        StoredFile.objects.filter(user=request.user, deleted_at__isnull=False)
+        .count()
+    )
     context = {
         'uploaded_files': uploaded_files,
+        'deleted_total': deleted_total,
     }
     return render(request, 'dashboard.html', context)
 
@@ -180,30 +201,144 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 def video_library(request: HttpRequest) -> HttpResponse:
     logger.info("video_library: fetching videos for user=%s", request.user.id)
     videos = (
-        StoredFile.objects.filter(user=request.user)
+        StoredFile.objects.filter(user=request.user, deleted_at__isnull=True)
         .filter(content_type__startswith='video/')
         .order_by('-uploaded_at')
     )
-    entries = []
-    for stored in videos:
-        can_play = bool(stored.file_uuid and stored.status == StoredFile.Status.READY)
-        entries.append(
-            {
-                'id': stored.id,
-                'bucket': stored.bucket_name,
-                'object_name': stored.folder,
-                'original_filename': stored.original_filename,
-                'uploaded_at': stored.uploaded_at,
-                'content_type': stored.content_type,
-                'status': stored.status,
-                'file_uuid': stored.file_uuid,
-                'can_play': can_play,
-            }
-        )
+    entries = [_serialize_file(stored) for stored in videos]
     context = {
         'videos': entries,
     }
     return render(request, 'videos.html', context)
+
+
+@login_required
+def bin_page(request: HttpRequest) -> HttpResponse:
+    logger.info("bin_page: fetching deleted files for user=%s", request.user.id)
+    deleted_files = (
+        StoredFile.objects.filter(user=request.user, deleted_at__isnull=False)
+        .order_by('-deleted_at', '-uploaded_at')
+    )
+    context = {
+        'deleted_files': [_serialize_file(stored) for stored in deleted_files],
+    }
+    return render(request, 'bin.html', context)
+
+
+@login_required
+@require_POST
+def delete_file(request: HttpRequest, file_id: int) -> JsonResponse:
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=True,
+    )
+    deleted_at = timezone.now()
+    stored_file.advance_status(
+        StoredFile.Status.DELETING,
+        allow_from=StoredFile.Status.values,
+    )
+    stored_file.deleted_at = deleted_at
+    stored_file.save(update_fields=['deleted_at'])
+    logger.info(
+        "delete_file: soft-deleted file_id=%s user=%s",
+        stored_file.id,
+        request.user.id,
+    )
+    return JsonResponse(
+        {
+            'status': 'ok',
+            'deleted_at': deleted_at.isoformat(),
+        }
+    )
+
+
+@login_required
+@require_POST
+def rename_file(request: HttpRequest, file_id: int) -> JsonResponse:
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=True,
+    )
+    new_name = (request.POST.get('new_name') or '').strip()
+    if not new_name:
+        return JsonResponse({'error': 'A new filename is required.'}, status=400)
+
+    sanitized = get_valid_filename(new_name)
+    original = stored_file.original_filename or ''
+    orig_root, orig_ext = os.path.splitext(original)
+    new_root, new_ext = os.path.splitext(sanitized)
+    if (orig_ext or new_ext) and orig_ext.lower() != new_ext.lower():
+        return JsonResponse({'error': 'File extension cannot be changed.'}, status=400)
+    if not new_root and orig_root:
+        return JsonResponse({'error': 'Filename cannot be empty.'}, status=400)
+
+    stored_file.original_filename = sanitized
+    stored_file.save(update_fields=['original_filename'])
+    logger.info(
+        "rename_file: renamed file_id=%s user=%s new_name=%s",
+        stored_file.id,
+        request.user.id,
+        sanitized,
+    )
+    return JsonResponse(
+        {
+            'status': 'ok',
+            'new_name': sanitized,
+        }
+    )
+
+
+@login_required
+@require_POST
+def purge_file(request: HttpRequest, file_id: int) -> JsonResponse:
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=False,
+    )
+    bucket_name = stored_file.bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
+    prefixes = set()
+    if stored_file.file_uuid:
+        base_prefix = (stored_file.per_upload_prefix or '').strip('/')
+        if base_prefix:
+            prefixes.add(f"{base_prefix}/")
+    if stored_file.folder and not stored_file.file_uuid:
+        prefixes.add(stored_file.folder)
+
+    removed_objects = 0
+    if bucket_name and prefixes:
+        for prefix in prefixes:
+            try:
+                removed_objects += storage_util.delete_prefix(
+                    prefix,
+                    bucket_name=bucket_name,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.exception(
+                    "purge_file: failed to delete prefix file_id=%s prefix=%s error=%s",
+                    stored_file.id,
+                    prefix,
+                    exc,
+                )
+    elif not bucket_name:
+        logger.warning(
+            "purge_file: bucket missing for file_id=%s, skipping remote cleanup",
+            stored_file.id,
+        )
+
+    stored_file.delete()
+    logger.info(
+        "purge_file: permanently deleted file_id=%s user=%s prefixes_deleted=%s",
+        file_id,
+        request.user.id,
+        removed_objects,
+    )
+    return JsonResponse({'status': 'ok', 'removed_objects': removed_objects})
 
 
 def _pick_download_filename(stored_file: StoredFile) -> str:
@@ -224,7 +359,12 @@ def _pick_download_filename(stored_file: StoredFile) -> str:
 
 @login_required
 def download_file(request: HttpRequest, file_id: int) -> HttpResponse:
-    stored_file = get_object_or_404(StoredFile, pk=file_id, user=request.user)
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=True,
+    )
     if not stored_file.folder:
         logger.warning("download_file: missing object_name for file_id=%s", stored_file.id)
         return HttpResponse('File is not available for download.', status=404)
@@ -262,7 +402,12 @@ def download_file(request: HttpRequest, file_id: int) -> HttpResponse:
 
 @login_required
 def play_video(request: HttpRequest, file_id: int) -> HttpResponse:
-    stored_file = get_object_or_404(StoredFile, pk=file_id, user=request.user)
+    stored_file = get_object_or_404(
+        StoredFile,
+        pk=file_id,
+        user=request.user,
+        deleted_at__isnull=True,
+    )
     if not stored_file.file_uuid:
         logger.warning(
             "play_video: requested file is not a video file_id=%s",

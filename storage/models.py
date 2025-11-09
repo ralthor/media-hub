@@ -50,6 +50,7 @@ class StoredFile(models.Model):
 
     size_bytes = models.BigIntegerField()
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     original_filename = models.CharField(max_length=512, blank=True, default="")
     content_type = models.CharField(max_length=255, blank=True, default="")
@@ -65,6 +66,10 @@ class StoredFile(models.Model):
             models.Index(fields=["file_uuid"], name="storedfile_uuid_idx"),
             models.Index(fields=["bucket_name", "folder"], name="storedfile_loc_idx"),
             models.Index(fields=["user", "-uploaded_at"], name="storedfile_user_idx"),
+            models.Index(
+                fields=["user", "deleted_at", "-uploaded_at"],
+                name="storedfile_user_deleted_idx",
+            ),
         ]
         ordering = ["-uploaded_at", "id"]
 

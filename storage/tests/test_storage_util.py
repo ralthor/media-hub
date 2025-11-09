@@ -107,3 +107,20 @@ class StorageUtilTests(TestCase):
         mock_blob.exists.assert_called_once()
         mock_blob.delete.assert_called_once()
 
+    @patch('storage.storage_util.storage.Client')
+    def test_delete_prefix_deletes_all_listed_blobs(self, mock_client):
+        mock_bucket = MagicMock()
+        mock_blob_one = MagicMock()
+        mock_blob_two = MagicMock()
+        mock_bucket.list_blobs.return_value = [mock_blob_one, mock_blob_two]
+        mock_client.return_value.bucket.return_value = mock_bucket
+
+        with override_settings(GCS_BUCKET_NAME='bucket-xyz'):
+            from storage.storage_util import delete_prefix
+
+            deleted_count = delete_prefix('user/00001/abc123')
+
+        self.assertEqual(deleted_count, 2)
+        mock_bucket.list_blobs.assert_called_once_with(prefix='user/00001/abc123')
+        mock_blob_one.delete.assert_called_once()
+        mock_blob_two.delete.assert_called_once()

@@ -11,9 +11,12 @@
           <p class="text-muted mb-0">Review and manage your uploaded files.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-          <a class="btn btn-outline-secondary" href="{% url 'logout' %}">Logout</a>
+          <a class="btn btn-outline-secondary" href="{% url 'bin' %}">
+            Bin{% if deleted_total %} ({{ deleted_total }}){% endif %}
+          </a>
           <a class="btn btn-outline-primary" href="{% url 'video_library' %}">View Videos</a>
           <a class="btn btn-primary" href="{% url 'upload' %}">Upload New File</a>
+          <a class="btn btn-outline-danger" href="{% url 'logout' %}">Logout</a>
         </div>
       </div>
 
@@ -38,7 +41,9 @@
                     <tr title="Object: {{ file.object_name }} / Bucket: {{ file.bucket }}">
                       <td>
                         <a href="{% url 'download_file' file.id %}" class="text-decoration-none" target="_blank" rel="noopener noreferrer">
-                          {{ file.original_filename|default:"(unnamed)" }}
+                          <span data-file-name-display>
+                            {{ file.original_filename|default:"(unnamed)" }}
+                          </span>
                         </a>
                       </td>
                       <td>{{ file.category }}</td>
@@ -46,11 +51,29 @@
                       <td>{{ file.content_type|default:"n/a" }}</td>
                       <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
                       <td>
-                        {% if file.can_play and file.status == 'READY' %}
-                          <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' file.id %}" target="_blank" rel="noopener noreferrer">Play</a>
-                        {% else %}
-                          <span class="text-muted">&mdash;</span>
-                        {% endif %}
+                        <div class="d-flex flex-wrap gap-2">
+                          {% if file.can_play %}
+                            <a class="btn btn-sm btn-outline-primary" href="{% url 'play_video' file.id %}" target="_blank" rel="noopener noreferrer">Play</a>
+                          {% endif %}
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary js-rename-file"
+                            data-file-id="{{ file.id }}"
+                            data-file-name="{{ file.original_filename|default:'' }}"
+                            data-rename-url="{% url 'rename_file' file.id %}"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger js-delete-file"
+                            data-file-id="{{ file.id }}"
+                            data-file-name="{{ file.original_filename|default:'this file' }}"
+                            data-delete-url="{% url 'delete_file' file.id %}"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   {% endfor %}
@@ -64,4 +87,99 @@
       </div>
     </div>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script>
+    (function () {
+      const getFetcher = function () {
+        if (window.StorageApp && typeof window.StorageApp.fetchWithCsrf === 'function') {
+          return window.StorageApp.fetchWithCsrf;
+        }
+        if (typeof window.fetch === 'function') {
+          return window.fetch.bind(window);
+        }
+        return null;
+      };
+      const fetchWithCsrf = getFetcher();
+      if (!fetchWithCsrf) {
+        return;
+      }
+
+      const handleDelete = function (button) {
+        const fileName = button.dataset.fileName || 'this file';
+        if (!window.confirm(`Delete ${fileName}? You can still find it in the bin.`)) {
+          return;
+        }
+        button.disabled = true;
+        fetchWithCsrf(button.dataset.deleteUrl, { method: 'POST' })
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.text().then((text) => Promise.reject(text || 'Failed to delete.'));
+            }
+            return resp.json();
+          })
+          .then(() => window.location.reload())
+          .catch((err) => {
+            window.alert(typeof err === 'string' ? err : 'Unable to delete the file.');
+            button.disabled = false;
+          });
+      };
+
+      const handleRename = function (button) {
+        const currentName = button.dataset.fileName || '';
+        const response = window.prompt('Enter a new name:', currentName);
+        if (response === null) {
+          return;
+        }
+        const trimmed = response.trim();
+        if (!trimmed || trimmed === currentName) {
+          return;
+        }
+        const getExt = (name) => {
+          const idx = name.lastIndexOf('.');
+          return idx === -1 ? '' : name.slice(idx).toLowerCase();
+        };
+        if (getExt(currentName) !== getExt(trimmed)) {
+          window.alert('File extension cannot be changed.');
+          return;
+        }
+        button.disabled = true;
+        const body = new URLSearchParams({ new_name: trimmed });
+        fetchWithCsrf(button.dataset.renameUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        })
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.json().catch(() => ({})).then((data) => {
+                throw data.error || 'Unable to rename the file.';
+              });
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            const target = button.closest('tr').querySelector('[data-file-name-display]');
+            if (target) {
+              target.textContent = data.new_name;
+            }
+            button.dataset.fileName = data.new_name;
+            button.disabled = false;
+          })
+          .catch((err) => {
+            window.alert(err || 'Unable to rename the file.');
+            button.disabled = false;
+          });
+      };
+
+      document.querySelectorAll('.js-delete-file').forEach((button) => {
+        button.addEventListener('click', () => handleDelete(button));
+      });
+      document.querySelectorAll('.js-rename-file').forEach((button) => {
+        button.addEventListener('click', () => handleRename(button));
+      });
+    })();
+  </script>
 {% endblock %}

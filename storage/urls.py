@@ -17,16 +17,33 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from .views import dashboard, download_file, logout_view, play_video, upload_file, video_library, video_page
+from .views import (
+    bin_page,
+    dashboard,
+    delete_file,
+    download_file,
+    logout_view,
+    play_video,
+    purge_file,
+    rename_file,
+    upload_file,
+    video_library,
+    video_page,
+)
 
 urlpatterns = [
+    path('', dashboard, name='dashboard'),
+    path('dashboard/', dashboard, name='dashboard_legacy'),
     path('admin/', admin.site.urls),
     path('upload/', upload_file, name='upload'),
     path('video/', video_page, name='video'),
-    path('dashboard/', dashboard, name='dashboard'),
+    path('bin/', bin_page, name='bin'),
     path('videos/', video_library, name='video_library'),
     path('files/<int:file_id>/download/', download_file, name='download_file'),
     path('files/<int:file_id>/play/', play_video, name='play_video'),
+    path('files/<int:file_id>/rename/', rename_file, name='rename_file'),
+    path('files/<int:file_id>/delete/', delete_file, name='delete_file'),
+    path('bin/files/<int:file_id>/purge/', purge_file, name='purge_file'),
     # Override logout to allow safe GET-based logout with ?next=
     path('accounts/logout/', logout_view, name='logout'),
     path('accounts/', include('django.contrib.auth.urls')),  # login, logout, password reset

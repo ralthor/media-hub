@@ -5,6 +5,7 @@ from unittest.mock import ANY, patch
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from storage.models import StoredFile
 
@@ -183,7 +184,7 @@ class DashboardViewTests(TestCase):
         )
 
     def test_dashboard_requires_login(self):
-        resp = self.client.get('/dashboard/')
+        resp = self.client.get('/')
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp['Location'].startswith('/accounts/login/'))
 
@@ -200,13 +201,114 @@ class DashboardViewTests(TestCase):
             content_type='video/mp4',
             status=StoredFile.Status.READY,
         )
-        resp = self.client.get('/dashboard/')
+        resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
         body = resp.content.decode()
         self.assertIn('sample.mp4', body)
         self.assertIn('videos-bucket', body)
         self.assertIn('video', body)
         self.assertIn('READY', body)
+
+    def test_dashboard_omits_deleted_files(self):
+        self.client.login(username=self.user.email, password=self.password)
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/archive.zip',
+            size_bytes=100,
+            original_filename='archive.zip',
+            content_type='application/zip',
+            status=StoredFile.Status.READY,
+            deleted_at=timezone.now(),
+        )
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('archive.zip', resp.content.decode())
+
+    def test_delete_file_marks_record_deleted(self):
+        self.client.login(username=self.user.email, password=self.password)
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/report.pdf',
+            size_bytes=256,
+            original_filename='report.pdf',
+            content_type='application/pdf',
+            status=StoredFile.Status.READY,
+        )
+        resp = self.client.post(f'/files/{stored.id}/delete/')
+        self.assertEqual(resp.status_code, 200)
+        stored.refresh_from_db()
+        self.assertIsNotNone(stored.deleted_at)
+
+    def test_rename_file_prevents_extension_change(self):
+        self.client.login(username=self.user.email, password=self.password)
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/report.pdf',
+            size_bytes=256,
+            original_filename='report.pdf',
+            content_type='application/pdf',
+            status=StoredFile.Status.READY,
+        )
+        resp = self.client.post(
+            f'/files/{stored.id}/rename/',
+            data={'new_name': 'report.txt'},
+        )
+        self.assertEqual(resp.status_code, 400)
+        stored.refresh_from_db()
+        self.assertEqual(stored.original_filename, 'report.pdf')
+
+        resp_ok = self.client.post(
+            f'/files/{stored.id}/rename/',
+            data={'new_name': 'quarterly_report.pdf'},
+        )
+        self.assertEqual(resp_ok.status_code, 200)
+        stored.refresh_from_db()
+        self.assertEqual(stored.original_filename, 'quarterly_report.pdf')
+
+    def test_bin_page_lists_deleted_files(self):
+        self.client.login(username=self.user.email, password=self.password)
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/old.txt',
+            size_bytes=10,
+            original_filename='old.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.DELETING,
+            deleted_at=timezone.now(),
+        )
+        resp = self.client.get('/bin/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn('old.txt', body)
+        self.assertIn('Delete Permanently', body)
+
+    @patch('storage.views.storage_util.delete_prefix', return_value=3)
+    def test_purge_file_deletes_record_and_storage(self, mock_delete_prefix):
+        self.client.login(username=self.user.email, password=self.password)
+        file_uuid = uuid.UUID('99999999-8888-7777-6666-555555555555')
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=file_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{file_uuid}/file',
+            size_bytes=10,
+            original_filename='clip.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.DELETING,
+            deleted_at=timezone.now(),
+        )
+        resp = self.client.post(f'/bin/files/{stored.id}/purge/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(StoredFile.objects.filter(id=stored.id).exists())
+        mock_delete_prefix.assert_called_once()
 
     def test_video_library_lists_only_videos(self):
         self.client.login(username=self.user.email, password=self.password)
@@ -237,6 +339,24 @@ class DashboardViewTests(TestCase):
         body = resp.content.decode()
         self.assertIn('sample.mp4', body)
         self.assertNotIn('doc.pdf', body)
+
+    def test_video_library_ignores_deleted_files(self):
+        self.client.login(username=self.user.email, password=self.password)
+        video_uuid = uuid.UUID('00000000-1111-2222-3333-444444444444')
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='gone.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+            deleted_at=timezone.now(),
+        )
+        resp = self.client.get('/videos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('gone.mp4', resp.content.decode())
 
     @patch('storage.views.storage_util.generate_signed_url')
     @patch('storage.views.storage_util.download_file_as_string')
@@ -324,6 +444,60 @@ class FileAccessControlTests(TestCase):
         ) as mock_generate:
             resp = self.client.get(f'/files/{stored.id}/play/')
 
+        self.assertEqual(resp.status_code, 404)
+        mock_download.assert_not_called()
+        mock_generate.assert_not_called()
+
+    def test_delete_file_denies_other_users_asset(self):
+        stored = StoredFile.objects.create(
+            user=self.other_user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.other_user.id:05d}/files/private.txt',
+            size_bytes=64,
+            original_filename='private.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.READY,
+        )
+        resp = self.client.post(f'/files/{stored.id}/delete/')
+        self.assertEqual(resp.status_code, 404)
+        stored.refresh_from_db()
+        self.assertIsNone(stored.deleted_at)
+
+    def test_download_denies_deleted_file(self):
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=None,
+            bucket_name='docs-bucket',
+            folder=f'user/{self.user.id:05d}/files/private.txt',
+            size_bytes=64,
+            original_filename='private.txt',
+            content_type='text/plain',
+            status=StoredFile.Status.DELETING,
+            deleted_at=timezone.now(),
+        )
+        with patch('storage.views.storage_util.generate_signed_url') as mock_generate:
+            resp = self.client.get(f'/files/{stored.id}/download/')
+        self.assertEqual(resp.status_code, 404)
+        mock_generate.assert_not_called()
+
+    def test_play_video_denies_deleted_file(self):
+        video_uuid = uuid.UUID('12345678-1234-5678-1234-567812345678')
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='secret.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.DELETING,
+            deleted_at=timezone.now(),
+        )
+        with patch('storage.views.storage_util.download_file_as_string') as mock_download, patch(
+            'storage.views.storage_util.generate_signed_url'
+        ) as mock_generate:
+            resp = self.client.get(f'/files/{stored.id}/play/')
         self.assertEqual(resp.status_code, 404)
         mock_download.assert_not_called()
         mock_generate.assert_not_called()

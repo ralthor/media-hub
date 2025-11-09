@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Bin — Storage Manager{% endblock %}
+
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+        <div>
+          <h1 class="mb-1">Bin</h1>
+          <p class="text-muted mb-0">Files you deleted. Permanently remove them from here.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}">Back to Dashboard</a>
+          <a class="btn btn-primary" href="{% url 'upload' %}">Upload New File</a>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Deleted Files</h2>
+          {% if deleted_files %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Deleted At</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for file in deleted_files %}
+                    <tr>
+                      <td>{{ file.original_filename|default:"(unnamed)" }}</td>
+                      <td>{{ file.deleted_at|date:"Y-m-d H:i" }}</td>
+                      <td>{{ file.category }}</td>
+                      <td>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-danger js-purge-file"
+                          data-purge-url="{% url 'purge_file' file.id %}"
+                          data-file-name="{{ file.original_filename|default:'this file' }}"
+                        >
+                          Delete Permanently
+                        </button>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Your bin is empty.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script>
+    (function () {
+      const getFetcher = function () {
+        if (window.StorageApp && typeof window.StorageApp.fetchWithCsrf === 'function') {
+          return window.StorageApp.fetchWithCsrf;
+        }
+        if (typeof window.fetch === 'function') {
+          return window.fetch.bind(window);
+        }
+        return null;
+      };
+      const fetchWithCsrf = getFetcher();
+      if (!fetchWithCsrf) {
+        return;
+      }
+
+      const bindButtons = function () {
+        document.querySelectorAll('.js-purge-file').forEach((button) => {
+          button.addEventListener('click', () => {
+            const fileName = button.dataset.fileName || 'this file';
+            if (!window.confirm(`Delete ${fileName} forever? This cannot be undone.`)) {
+              return;
+            }
+            button.disabled = true;
+            fetchWithCsrf(button.dataset.purgeUrl, { method: 'POST' })
+              .then((resp) => {
+                if (!resp.ok) {
+                  return resp.text().then((text) => Promise.reject(text || 'Unable to delete.'));
+                }
+                return resp.json();
+              })
+              .then(() => {
+                const row = button.closest('tr');
+                if (row) {
+                  row.remove();
+                }
+                if (!document.querySelector('.js-purge-file')) {
+                  const tableWrapper = document.querySelector('.table-responsive');
+                  if (tableWrapper) {
+                    tableWrapper.remove();
+                  }
+                  const container = document.createElement('p');
+                  container.className = 'text-muted mb-0';
+                  container.textContent = 'Your bin is empty.';
+                  const cardBody = document.querySelector('.card-body');
+                  if (cardBody) {
+                    cardBody.appendChild(container);
+                  }
+                }
+              })
+              .catch((err) => {
+                window.alert(typeof err === 'string' ? err : 'Unable to remove the file.');
+                button.disabled = false;
+              });
+          });
+        });
+      };
+
+      bindButtons();
+    })();
+  </script>
+{% endblock %}
