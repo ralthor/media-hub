@@ -36,7 +36,11 @@
                 <tbody>
                   {% for file in uploaded_files %}
                     <tr>
-                      <td>{{ file.original_filename|default:"(unnamed)" }}</td>
+                      <td>
+                        <a href="{% url 'download_file' file.id %}" class="text-decoration-none">
+                          {{ file.original_filename|default:"(unnamed)" }}
+                        </a>
+                      </td>
                       <td><code>{{ file.object_name }}</code></td>
                       <td>{{ file.bucket }}</td>
                       <td>{{ file.category }}</td>

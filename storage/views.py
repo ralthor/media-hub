@@ -1,9 +1,10 @@
 import logging
+from urllib.parse import quote
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from dataclasses import asdict
 
@@ -167,6 +168,60 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         'uploaded_files': uploaded_files,
     }
     return render(request, 'dashboard.html', context)
+
+
+def _pick_download_filename(stored_file: StoredFile) -> str:
+    """Choose a reasonable filename for download headers."""
+    candidates = [
+        stored_file.original_filename,
+        stored_file.folder.rsplit('/', 1)[-1] if stored_file.folder else '',
+        str(stored_file.file_uuid) if stored_file.file_uuid else '',
+        f'file-{stored_file.pk}',
+    ]
+    for candidate in candidates:
+        candidate = (candidate or '').strip()
+        if candidate:
+            # Avoid quotes/newlines in Content-Disposition
+            return candidate.replace('"', '').replace('\r', '').replace('\n', '')
+    return 'download'
+
+
+@login_required
+def download_file(request: HttpRequest, file_id: int) -> HttpResponse:
+    stored_file = get_object_or_404(StoredFile, pk=file_id, user=request.user)
+    if not stored_file.folder:
+        logger.warning("download_file: missing object_name for file_id=%s", stored_file.id)
+        return HttpResponse('File is not available for download.', status=404)
+
+    bucket_name = stored_file.bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
+    if not bucket_name:
+        logger.error("download_file: bucket missing for file_id=%s", stored_file.id)
+        return HttpResponse('Storage bucket is not configured.', status=500)
+
+    filename = _pick_download_filename(stored_file)
+    disposition = f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+
+    try:
+        signed_url = storage_util.generate_signed_url(
+            stored_file.folder,
+            bucket_name=bucket_name,
+            response_disposition=disposition,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception(
+            "download_file: failed to build signed url file_id=%s: %s",
+            stored_file.id,
+            exc,
+        )
+        return HttpResponse('Unable to generate download link at the moment.', status=500)
+
+    logger.info(
+        "download_file: redirecting to signed url file_id=%s bucket=%s object=%s",
+        stored_file.id,
+        bucket_name,
+        stored_file.folder,
+    )
+    return redirect(signed_url)
 
 
 def logout_view(request: HttpRequest) -> HttpResponse:
