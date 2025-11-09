@@ -10,7 +10,11 @@ from django.utils import timezone
 from storage.models import StoredFile
 
 
-@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+@override_settings(
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CELERY_TASK_EAGER_PROPAGATES=True,
+    VIDEO_PROCESSING_ENABLED=False,
+)
 class UploadViewTests(TestCase):
     def setUp(self):
         self.client = Client()

@@ -445,7 +445,18 @@ def schedule_primary_upload(
 
     stored_file.advance_status(StoredFile.Status.UPLOAD_COMPLETE)
 
-    if classification_obj.is_video and stored_file.file_uuid:
+    video_processing_enabled = getattr(settings, 'VIDEO_PROCESSING_ENABLED', True)
+    if classification_obj.is_video and stored_file.file_uuid and not video_processing_enabled:
+        logger.info(
+            "upload_file: video processing disabled stored_file_id=%s",
+            stored_file.id,
+        )
+        _schedule_local_cleanup.delay(
+            stored_file.id,
+            stored_file.local_workdir,
+            final_status=StoredFile.Status.READY,
+        )
+    elif classification_obj.is_video and stored_file.file_uuid:
         _schedule_video_processing.delay(stored_file.id, local_path)
     else:
         _schedule_local_cleanup.delay(
