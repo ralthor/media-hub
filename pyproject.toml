@@ -10,3 +10,7 @@ dependencies = [
     "celery>=5.4.0",
     "redis>=5.0.0",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
