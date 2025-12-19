@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tempfile
-import uuid as _uuid
 from pathlib import Path
 from typing import ClassVar, Dict, Iterable
 
