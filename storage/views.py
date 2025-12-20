@@ -45,6 +45,33 @@ _CATEGORY_SORT_EXPRESSION = Case(
 )
 
 
+def _format_size(size_bytes: int | None) -> str:
+    if not size_bytes or size_bytes <= 0:
+        return "Unknown"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(size_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} B"
+            formatted = f"{size:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted} {unit}"
+        size /= 1024
+    return "Unknown"
+
+
+def _format_duration(duration_seconds: float | int | None) -> str:
+    if not duration_seconds or duration_seconds <= 0:
+        return "Unknown"
+
+    total_seconds = int(duration_seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:d}:{seconds:02d}"
+
+
 def _serialize_file(stored: StoredFile) -> dict:
     """Return template-friendly metadata describing a StoredFile."""
     category = getattr(stored, 'category_label', None) or _category_from_content_type(
@@ -72,6 +99,10 @@ def _serialize_file(stored: StoredFile) -> dict:
         'can_play': can_play,
         'is_deleted': is_deleted,
         'deleted_at': stored.deleted_at,
+        'size_display': _format_size(getattr(stored, 'size_bytes', None)),
+        'duration_display': _format_duration(
+            getattr(stored, 'duration_seconds', None)
+        ),
     }
 
 

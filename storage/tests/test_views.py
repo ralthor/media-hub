@@ -143,6 +143,27 @@ class UploadViewTests(TestCase):
         upload_path = Path(mock_upload.call_args[0][0])
         self.assertEqual(upload_path.parent, Path(stored.local_workdir))
 
+    @patch('storage.upload_helpers._extract_video_duration_seconds', return_value=125)
+    @patch('storage.upload_helpers.storage_util.upload_local_file')
+    @patch('storage.upload_helpers.uuid.uuid4')
+    def test_video_upload_records_duration_seconds(self, mock_uuid, mock_upload, mock_extract):
+        fake_uuid = uuid.UUID('0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f')
+        mock_uuid.return_value = fake_uuid
+        expected_object = f"user/{self.user.id:05d}/{fake_uuid}/file"
+        mock_upload.return_value = {
+            'bucket': 'videos-bucket',
+            'object_name': expected_object,
+            'gs_uri': f'gs://videos-bucket/{expected_object}',
+        }
+
+        uploaded = SimpleUploadedFile('clip.mp4', b'video-bytes', content_type='video/mp4')
+        resp = self.client.post('/upload/', {'file': uploaded})
+
+        self.assertEqual(resp.status_code, 200)
+        stored = StoredFile.objects.get()
+        self.assertEqual(stored.duration_seconds, 125)
+        mock_extract.assert_called_once()
+
 class VideoViewTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -200,10 +221,11 @@ class DashboardViewTests(TestCase):
             file_uuid=video_uuid,
             bucket_name='videos-bucket',
             folder=f'user/{self.user.id:05d}/{video_uuid}/file',
-            size_bytes=2048,
+            size_bytes=1572864,
             original_filename='sample.mp4',
             content_type='video/mp4',
             status=StoredFile.Status.READY,
+            duration_seconds=125,
         )
         resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
@@ -212,6 +234,8 @@ class DashboardViewTests(TestCase):
         self.assertIn('videos-bucket', body)
         self.assertIn('video', body)
         self.assertIn('READY', body)
+        self.assertIn('1.5 MB', body)
+        self.assertIn('2:05', body)
 
     def test_dashboard_sort_by_name_ascending(self):
         self.client.login(username=self.user.email, password=self.password)
@@ -417,6 +441,7 @@ class DashboardViewTests(TestCase):
             original_filename='sample.mp4',
             content_type='video/mp4',
             status=StoredFile.Status.READY,
+            duration_seconds=3723,
         )
         StoredFile.objects.create(
             user=self.user,
@@ -434,6 +459,8 @@ class DashboardViewTests(TestCase):
         body = resp.content.decode()
         self.assertIn('sample.mp4', body)
         self.assertNotIn('doc.pdf', body)
+        self.assertIn('2 KB', body)
+        self.assertIn('1:02:03', body)
 
     def test_video_library_sort_by_bucket_descending(self):
         self.client.login(username=self.user.email, password=self.password)

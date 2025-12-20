@@ -96,6 +96,8 @@
                         </a>
                       </th>
                     {% endwith %}
+                    <th scope="col">Size</th>
+                    <th scope="col">Duration</th>
                     {% with option=sorting.options.uploaded_at %}
                       <th scope="col">
                         <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
@@ -129,6 +131,8 @@
                       <td>{{ file.category }}</td>
                       <td>{{ file.status }}</td>
                       <td>{{ file.content_type|default:"n/a" }}</td>
+                      <td>{{ file.size_display }}</td>
+                      <td>{{ file.duration_display }}</td>
                       <td>{{ file.uploaded_at|date:"Y-m-d H:i" }}</td>
                       <td>
                         <div class="d-flex flex-wrap gap-2">
