@@ -48,6 +48,7 @@ class StoredFile(models.Model):
     folder = models.CharField(max_length=1024, blank=True, default="")
 
     size_bytes = models.BigIntegerField()
+    duration_seconds = models.IntegerField(null=True, blank=True, default=0)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 

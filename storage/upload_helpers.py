@@ -138,6 +138,65 @@ def write_upload_to_disk(uploaded, dest_path: str) -> int:
     return total_written
 
 
+def _extract_video_duration_seconds(local_path: str) -> Optional[int]:
+    """Return the rounded duration of a video file if available."""
+
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        logger.info(
+            "upload_file: ffprobe not found; skipping duration probe path=%s",
+            local_path,
+        )
+        return None
+
+    cmd = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        local_path,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        logger.warning(
+            "upload_file: ffprobe command missing while probing duration path=%s",
+            local_path,
+        )
+        return None
+    except subprocess.CalledProcessError as exc:
+        logger.warning(
+            "upload_file: ffprobe failed returncode=%s path=%s",
+            exc.returncode,
+            local_path,
+            exc_info=True,
+        )
+        return None
+
+    output = (result.stdout or "").strip().splitlines()
+    if not output:
+        return None
+
+    try:
+        duration = float(output[-1].strip())
+    except (TypeError, ValueError):
+        return None
+
+    if duration <= 0:
+        return None
+
+    return int(duration + 0.5)
+
+
 def _classification_from_dict(payload: Dict[str, object]) -> UploadClassification:
     return UploadClassification(
         filename=str(payload.get('filename', '')),
@@ -433,15 +492,23 @@ def schedule_primary_upload(
     stored_file.size_bytes = size_bytes
     stored_file.original_filename = original_filename or classification_obj.filename
     stored_file.content_type = classification_obj.effective_content_type or ''
-    stored_file.save(
-        update_fields=[
-            'bucket_name',
-            'folder',
-            'size_bytes',
-            'original_filename',
-            'content_type',
-        ]
-    )
+    duration_seconds: Optional[int] = None
+    if classification_obj.is_video:
+        duration_seconds = _extract_video_duration_seconds(local_path)
+        if duration_seconds is not None:
+            stored_file.duration_seconds = duration_seconds
+
+    update_fields = [
+        'bucket_name',
+        'folder',
+        'size_bytes',
+        'original_filename',
+        'content_type',
+    ]
+    if duration_seconds is not None:
+        update_fields.append('duration_seconds')
+
+    stored_file.save(update_fields=update_fields)
 
     stored_file.advance_status(StoredFile.Status.UPLOAD_COMPLETE)
 
