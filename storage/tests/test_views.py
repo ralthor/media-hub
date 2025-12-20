@@ -482,9 +482,8 @@ class DashboardViewTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('gone.mp4', resp.content.decode())
 
-    @patch('storage.views.storage_util.generate_signed_url')
     @patch('storage.views.storage_util.download_file_as_string')
-    def test_play_video_returns_signed_manifest(self, mock_download, mock_generate):
+    def test_play_video_rewrites_manifest_with_streaming_urls(self, mock_download):
         self.client.login(username=self.user.email, password=self.password)
         video_uuid = uuid.UUID('99999999-8888-7777-6666-555555555555')
         stored = StoredFile.objects.create(
@@ -497,9 +496,8 @@ class DashboardViewTests(TestCase):
             content_type='video/mp4',
             status=StoredFile.Status.READY,
         )
-        manifest = '#EXTM3U\n#EXTINF:10,\nsegment_00001.ts\n'
+        manifest = '#EXTM3U\n#EXTINF:10,\nsegment_00001.ts\nhttps://cdn.example/segment.m4s\n'
         mock_download.return_value = manifest
-        mock_generate.side_effect = lambda object_name, **kwargs: f'https://signed/{object_name}'
 
         resp = self.client.get(f'/files/{stored.id}/play/')
 
@@ -508,16 +506,73 @@ class DashboardViewTests(TestCase):
         disposition = resp['Content-Disposition']
         self.assertIn('user_{:05d}_{}_segmented_output.m3u8'.format(self.user.id, video_uuid), disposition)
         body = resp.content.decode()
-        expected_segment = f'user/{self.user.id:05d}/{video_uuid}/segmented/segment_00001.ts'
-        self.assertIn(f'https://signed/{expected_segment}', body)
+        expected_segment = f'/videos/{video_uuid}/segments/segment_00001.ts'
+        self.assertIn(expected_segment, body)
+        self.assertIn('https://cdn.example/segment.m4s', body)
         mock_download.assert_called_once_with(
             f'user/{self.user.id:05d}/{video_uuid}/segmented/output.m3u8',
             bucket_name='videos-bucket',
         )
-        mock_generate.assert_called_once_with(
-            expected_segment,
-            bucket_name='videos-bucket',
+        # Ensure absolute URLs are preserved
+        self.assertIn('#EXTM3U', body)
+
+
+class SegmentStreamTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.password = 'test-pass-stream'
+        self.user = get_user_model().objects.create_user(
+            email='streamer@example.com',
+            password=self.password,
         )
+        self.client.login(username=self.user.email, password=self.password)
+
+    @patch('storage.views.storage_util.generate_signed_url')
+    def test_stream_segment_redirects_to_signed_url(self, mock_generate):
+        video_uuid = uuid.UUID('12121212-3434-5656-7878-909090909090')
+        stored = StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder=f'user/{self.user.id:05d}/{video_uuid}/file',
+            size_bytes=2048,
+            original_filename='movie.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+        )
+        mock_generate.return_value = 'https://signed.example/segment_00001.ts'
+
+        resp = self.client.get(f'/videos/{video_uuid}/segments/segment_00001.ts')
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp['Location'], 'https://signed.example/segment_00001.ts')
+        self.assertEqual(resp['Cache-Control'], 'no-store')
+        expected_object = (
+            f'user/{self.user.id:05d}/{video_uuid}/segmented/segment_00001.ts'
+        )
+        mock_generate.assert_called_once_with(
+            expected_object,
+            bucket_name=stored.bucket_name,
+        )
+
+    @patch('storage.views.storage_util.generate_signed_url')
+    def test_stream_segment_handles_missing_prefix(self, mock_generate):
+        video_uuid = uuid.UUID('aaaaaaaa-0000-1111-2222-bbbbbbbbbbbb')
+        StoredFile.objects.create(
+            user=self.user,
+            file_uuid=video_uuid,
+            bucket_name='videos-bucket',
+            folder='',
+            size_bytes=1024,
+            original_filename='broken.mp4',
+            content_type='video/mp4',
+            status=StoredFile.Status.READY,
+        )
+
+        resp = self.client.get(f'/videos/{video_uuid}/segments/segment_00001.ts')
+
+        self.assertEqual(resp.status_code, 404)
+        mock_generate.assert_not_called()
 
 
 class FileAccessControlTests(TestCase):
