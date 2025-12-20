@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Confirm restore{% endblock %}
+{% block content %}
+  <div class="mb-3">
+    <a href="{% url 'database_backup_list' %}" class="btn btn-link">&larr; Back to backups</a>
+  </div>
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h1 class="mb-1">Confirm database restore</h1>
+      <p class="text-muted mb-0">Choose a backup to restore; the latest backup is selected by default.</p>
+    </div>
+    {% if maintenance_mode %}
+      <span class="badge bg-success">Maintenance mode enabled</span>
+    {% else %}
+      <span class="badge bg-danger">Maintenance mode required</span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+    <div class="alert alert-danger" role="alert">{{ error }}</div>
+  {% endif %}
+
+  {% if selected_backup %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-bold">{{ selected_backup.timestamp|date:"Y-m-d H:i:s T" }}</div>
+          <div class="text-muted small">{{ selected_backup.object_name }}</div>
+        </div>
+        <span class="badge bg-primary">Selected backup</span>
+      </div>
+    </div>
+
+    <div class="alert alert-warning" role="alert">
+      Restoring will atomically replace the local <code>db.sqlite3</code> file. Ensure maintenance mode is enabled so no writes occur during the restore.
+    </div>
+
+    <form method="post" class="d-flex gap-2">
+      {% csrf_token %}
+      <input type="hidden" name="object_name" value="{{ selected_backup.object_name }}">
+      <button type="submit" class="btn btn-danger" {% if not maintenance_mode %}disabled{% endif %}>Restore database</button>
+      <a class="btn btn-secondary" href="{% url 'database_backup_list' %}">Cancel</a>
+    </form>
+  {% elif not has_backups %}
+    <div class="alert alert-info" role="alert">No backups are available to restore.</div>
+  {% endif %}
+{% endblock %}

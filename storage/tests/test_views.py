@@ -1,5 +1,6 @@
 import uuid
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import ANY, patch
 
 from django.contrib.auth import get_user_model
@@ -8,6 +9,7 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from storage.models import StoredFile
+from storage.backup_tasks import DatabaseBackup
 
 
 @override_settings(
@@ -680,3 +682,75 @@ class FileAccessControlTests(TestCase):
         self.assertEqual(resp.status_code, 404)
         mock_download.assert_not_called()
         mock_generate.assert_not_called()
+
+
+class DatabaseRestoreViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.password = 'restore-pass'
+        self.staff_user = get_user_model().objects.create_user(
+            email='staff@example.com',
+            password=self.password,
+            is_staff=True,
+        )
+        self.client.login(username=self.staff_user.email, password=self.password)
+
+    def test_backup_views_require_staff(self):
+        non_staff = get_user_model().objects.create_user(
+            email='regular@example.com', password='abc12345'
+        )
+        self.client.logout()
+        self.client.login(username=non_staff.email, password='abc12345')
+
+        resp = self.client.get('/backups/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/admin/login/', resp['Location'])
+
+    @patch('storage.backup_tasks.list_database_backups')
+    def test_confirm_view_defaults_to_latest_backup(self, mock_list):
+        newest = DatabaseBackup('db-20240102T010101Z', timezone.now())
+        older = DatabaseBackup('db-20240101T010101Z', timezone.now() - timezone.timedelta(days=1))
+        mock_list.return_value = [newest, older]
+
+        resp = self.client.get('/backups/restore/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(newest.object_name.encode('utf-8'), resp.content)
+        self.assertNotIn(b'No backups are available', resp.content)
+
+    @override_settings(MAINTENANCE_MODE=False)
+    @patch('storage.backup_tasks.list_database_backups')
+    def test_restore_blocked_without_maintenance_mode(self, mock_list):
+        backup = DatabaseBackup('db-20240102T010101Z', timezone.now())
+        mock_list.return_value = [backup]
+
+        with patch('storage.views._restore_sqlite_backup') as mock_restore:
+            resp = self.client.post('/backups/restore/', {'object_name': backup.object_name})
+
+        self.assertEqual(resp.status_code, 403)
+        mock_restore.assert_not_called()
+        self.assertIn(b'Maintenance mode', resp.content)
+
+    @override_settings(MAINTENANCE_MODE=True)
+    @patch('storage.backup_tasks.download_database_backup')
+    @patch('storage.backup_tasks.list_database_backups')
+    def test_restore_replaces_database_atomically(self, mock_list, mock_download):
+        backup = DatabaseBackup('db-20240103T010101Z', timezone.now())
+        mock_list.return_value = [backup]
+
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / 'db.sqlite3'
+            db_path.write_text('old-db')
+
+            def _write_restore(object_name, destination, bucket_name=None):
+                Path(destination).write_text('restored-db')
+                return Path(destination)
+
+            mock_download.side_effect = _write_restore
+
+            with patch('storage.views._resolve_sqlite_path', return_value=db_path):
+                resp = self.client.post('/backups/restore/', {'object_name': backup.object_name})
+
+            self.assertEqual(resp.status_code, 302)
+            self.assertEqual(db_path.read_text(), 'restored-db')
+            mock_download.assert_called_once_with(backup.object_name, ANY)

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Database backups{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h1 class="mb-0">Database backups</h1>
+      <p class="text-muted mb-0">Review available SQLite backups stored in GCS.</p>
+    </div>
+    <div class="text-end">
+      {% if maintenance_mode %}
+        <span class="badge bg-success">Maintenance mode enabled</span>
+      {% else %}
+        <span class="badge bg-secondary">Maintenance mode disabled</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if not bucket_configured %}
+    <div class="alert alert-warning" role="alert">
+      Database snapshot bucket is not configured; no backups can be listed.
+    </div>
+  {% elif not backups %}
+    <div class="alert alert-info" role="alert">
+      No database backups were found in the configured bucket.
+    </div>
+  {% else %}
+    <form method="get" action="{% url 'confirm_restore_backup' %}">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong>Available backups</strong>
+          <small class="text-muted">Newest first; the latest backup will be used if you do not pick one.</small>
+        </div>
+        <div class="card-body p-0">
+          <div class="list-group list-group-flush">
+            {% for backup in backups %}
+              <label class="list-group-item list-group-item-action d-flex align-items-center">
+                <input class="form-check-input me-3" type="radio" name="object_name" value="{{ backup.object_name }}" {% if backup.object_name == default_selection %}checked{% endif %}>
+                <div class="flex-grow-1">
+                  <div class="fw-semibold">{{ backup.timestamp|date:"Y-m-d H:i:s T" }}</div>
+                  <div class="text-muted small">{{ backup.object_name }}</div>
+                </div>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between">
+          <div class="text-muted small">Restoring will replace the local db.sqlite3 atomically.</div>
+          <button type="submit" class="btn btn-primary">Review selection</button>
+        </div>
+      </div>
+    </form>
+  {% endif %}
+{% endblock %}
