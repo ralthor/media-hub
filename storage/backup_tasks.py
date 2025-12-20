@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -18,6 +19,12 @@ from . import storage_util
 logger = logging.getLogger(__name__)
 
 BACKUP_BASENAME_PATTERN = re.compile(r"db-(?P<ts>\d{8}T\d{6}Z)\.sqlite3$")
+
+
+@dataclass(frozen=True)
+class DatabaseBackup:
+    object_name: str
+    timestamp: timezone.datetime
 
 
 def _get_backup_bucket_name() -> Optional[str]:
@@ -44,6 +51,40 @@ def _iter_backups(bucket, prefix: str) -> Iterable[Tuple[str, timezone.datetime]
             logger.debug("Skipping snapshot with unparseable timestamp: %s", name)
             continue
         yield name, ts
+
+
+def list_database_backups() -> List[DatabaseBackup]:
+    """Return available database backups sorted by newest first."""
+
+    bucket_name = _get_backup_bucket_name()
+    if not bucket_name:
+        logger.warning("DB backup listing skipped: bucket not configured")
+        return []
+
+    bucket = storage_util.get_bucket(bucket_name)
+    prefix = _resolve_backup_prefix()
+    backups = sorted(_iter_backups(bucket, prefix), key=lambda item: item[1], reverse=True)
+    return [DatabaseBackup(object_name=name, timestamp=ts) for name, ts in backups]
+
+
+def download_database_backup(
+    object_name: str, destination: Path, bucket_name: Optional[str] = None
+) -> Path:
+    """Download a specific database backup to the given path."""
+
+    target_bucket = bucket_name or _get_backup_bucket_name()
+    if not target_bucket:
+        raise ValueError("DB backup download failed: bucket not configured")
+
+    bucket = storage_util.get_bucket(target_bucket)
+    dest_path = Path(destination)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "Downloading database backup object=%s bucket=%s to %s", object_name, target_bucket, dest_path
+    )
+    bucket.blob(object_name).download_to_filename(dest_path)
+    return dest_path
 
 
 def _select_backups_to_delete(

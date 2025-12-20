@@ -1,8 +1,12 @@
 import logging
 import os
+import tempfile
 from dataclasses import asdict
+from pathlib import Path
 from urllib.parse import quote
 
+from django.contrib import messages
+from django.contrib.admin.views.decorators import staff_member_required
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
@@ -13,9 +17,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import get_valid_filename
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 
-from . import storage_util
+from . import backup_tasks, storage_util
 from .models import StoredFile
 from .upload_helpers import (
     classify_uploaded_file,
@@ -142,6 +146,100 @@ def _apply_sorting(
     if isinstance(extra_order, str):
         extra_order = [extra_order]
     return queryset.order_by(order_by, *extra_order)
+
+
+def _resolve_sqlite_path() -> Path:
+    db_name = settings.DATABASES.get('default', {}).get('NAME')
+    if not db_name:
+        raise ValueError("DATABASES['default']['NAME'] is not configured")
+    return Path(db_name)
+
+
+def _choose_backup(backups: list[backup_tasks.DatabaseBackup], object_name: str | None):
+    if object_name:
+        for backup in backups:
+            if backup.object_name == object_name:
+                return backup
+    return backups[0] if backups else None
+
+
+def _restore_sqlite_backup(selection: backup_tasks.DatabaseBackup, user) -> tuple[bool, str]:
+    db_path = _resolve_sqlite_path()
+    tmp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=db_path.parent, suffix='.sqlite3.restore', delete=False
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+
+        backup_tasks.download_database_backup(selection.object_name, tmp_path)
+        os.replace(tmp_path, db_path)
+    except Exception:
+        logger.exception(
+            "Database restore failed for %s by user_id=%s", selection.object_name, getattr(user, 'id', None)
+        )
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+        return False, "The database restore failed; check the logs for details."
+
+    logger.info(
+        "Database restored from %s by user_id=%s", selection.object_name, getattr(user, 'id', None)
+    )
+    return True, "The database has been restored from the selected backup."
+
+
+@staff_member_required
+@require_http_methods(["GET"])
+def database_backup_list(request: HttpRequest) -> HttpResponse:
+    backups = backup_tasks.list_database_backups()
+    context = {
+        'backups': backups,
+        'bucket_configured': bool(getattr(settings, 'DB_SNAPSHOT_BUCKET_NAME', None)),
+        'maintenance_mode': getattr(settings, 'MAINTENANCE_MODE', False),
+        'default_selection': backups[0].object_name if backups else None,
+    }
+    return render(request, 'backups/list.html', context)
+
+
+@staff_member_required
+@require_http_methods(["GET", "POST"])
+def confirm_restore_backup(request: HttpRequest) -> HttpResponse:
+    backups = backup_tasks.list_database_backups()
+    requested_name = request.GET.get('object_name') if request.method == 'GET' else request.POST.get('object_name')
+    selection = _choose_backup(backups, requested_name)
+
+    context = {
+        'selected_backup': selection,
+        'has_backups': bool(backups),
+        'maintenance_mode': getattr(settings, 'MAINTENANCE_MODE', False),
+        'backups': backups,
+    }
+    status_code = 200
+
+    if not selection:
+        context['error'] = 'No backups are available to restore.'
+        status_code = 404
+    elif request.method == 'POST':
+        if not context['maintenance_mode']:
+            logger.warning(
+                "Database restore blocked because maintenance mode is disabled (user_id=%s)",
+                getattr(request.user, 'id', None),
+            )
+            context['error'] = 'Enable maintenance mode before restoring the database.'
+            status_code = 403
+        else:
+            success, message_text = _restore_sqlite_backup(selection, request.user)
+            if success:
+                messages.success(request, message_text)
+                return redirect('database_backup_list')
+            context['error'] = message_text
+            status_code = 500
+
+    return render(request, 'backups/confirm_restore.html', context, status=status_code)
 
 
 @login_required
