@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Case, CharField, Value, When
 from django.http import HttpRequest, HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import get_valid_filename
@@ -622,33 +623,28 @@ def play_video(request: HttpRequest, file_id: int) -> HttpResponse:
     lines = manifest_content.splitlines()
     had_trailing_newline = manifest_content.endswith(('\n', '\r'))
 
-    signed_lines = []
+    rewritten_lines = []
     replacement_count = 0
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith('#') or '://' in stripped:
-            signed_lines.append(line)
+            rewritten_lines.append(line)
             continue
-        segment_object = '/'.join(
-            part.strip('/') for part in (segmented_prefix, stripped) if part
+
+        segment_url = request.build_absolute_uri(
+            reverse(
+                'stream_segment',
+                kwargs={
+                    'file_uuid': stored_file.file_uuid,
+                    'segment': stripped,
+                },
+            )
         )
-        try:
-            signed_url = storage_util.generate_signed_url(
-                segment_object,
-                bucket_name=bucket_name,
-            )
-        except Exception as exc:
-            logger.exception(
-                "play_video: failed to sign segment file_id=%s object=%s error=%s",
-                stored_file.id,
-                segment_object,
-                exc,
-            )
-            return HttpResponse('Unable to prepare playable manifest.', status=500)
-        signed_lines.append(signed_url)
+
+        rewritten_lines.append(segment_url)
         replacement_count += 1
 
-    signed_manifest = "\n".join(signed_lines)
+    signed_manifest = "\n".join(rewritten_lines)
     if had_trailing_newline:
         signed_manifest += "\n"
 
@@ -656,7 +652,7 @@ def play_video(request: HttpRequest, file_id: int) -> HttpResponse:
     download_name = f"user_{padded_user_id}_{stored_file.file_uuid}_segmented_output.m3u8"
 
     logger.info(
-        "play_video: prepared signed manifest file_id=%s manifest=%s segments_signed=%s",
+        "play_video: prepared rewritten manifest file_id=%s manifest=%s segments_rewritten=%s",
         stored_file.id,
         manifest_object,
         replacement_count,
@@ -664,6 +660,58 @@ def play_video(request: HttpRequest, file_id: int) -> HttpResponse:
 
     response = HttpResponse(signed_manifest, content_type='application/vnd.apple.mpegurl')
     response['Content-Disposition'] = f'inline; filename="{download_name}"'
+    return response
+
+
+@login_required
+def stream_segment(request: HttpRequest, file_uuid, segment: str) -> HttpResponse:
+    stored_file = get_object_or_404(
+        StoredFile,
+        file_uuid=file_uuid,
+        user=request.user,
+        deleted_at__isnull=True,
+    )
+
+    bucket_name = stored_file.bucket_name or getattr(settings, 'GCS_BUCKET_NAME', None)
+    if not bucket_name:
+        logger.error("stream_segment: bucket missing for file_uuid=%s", stored_file.file_uuid)
+        return HttpResponse('Storage bucket is not configured.', status=500)
+
+    base_prefix = (stored_file.per_upload_prefix or '').strip('/')
+    if not base_prefix:
+        logger.warning(
+            "stream_segment: missing per-upload prefix file_uuid=%s segment=%s",
+            stored_file.file_uuid,
+            segment,
+        )
+        return HttpResponse('Segmented assets not available for this video.', status=404)
+
+    segmented_prefix = f"{base_prefix}/segmented"
+    segment_object = '/'.join(part.strip('/') for part in (segmented_prefix, segment) if part)
+
+    try:
+        signed_url = storage_util.generate_signed_url(
+            segment_object,
+            bucket_name=bucket_name,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception(
+            "stream_segment: failed to sign segment file_uuid=%s object=%s error=%s",
+            stored_file.file_uuid,
+            segment_object,
+            exc,
+        )
+        return HttpResponse('Unable to generate segment link at the moment.', status=500)
+
+    logger.info(
+        "stream_segment: redirecting to signed segment file_uuid=%s segment=%s bucket=%s",
+        stored_file.file_uuid,
+        segment,
+        bucket_name,
+    )
+
+    response = redirect(signed_url)
+    response['Cache-Control'] = 'no-store'
     return response
 
 
