@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -188,6 +189,20 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+
+# Database snapshot configuration
+DB_SNAPSHOT_BUCKET_NAME = os.getenv('DB_SNAPSHOT_BUCKET_NAME', os.getenv('GCS_BUCKET_NAME'))
+DB_SNAPSHOT_PREFIX = os.getenv('DB_SNAPSHOT_PREFIX', 'db-snapshots')
+DB_SNAPSHOT_RETENTION_HOURLY_HOURS = int(os.getenv('DB_SNAPSHOT_RETENTION_HOURLY_HOURS', '24'))
+DB_SNAPSHOT_RETENTION_DAILY_DAYS = int(os.getenv('DB_SNAPSHOT_RETENTION_DAILY_DAYS', '7'))
+DB_SNAPSHOT_RETENTION_WEEKLY_WEEKS = int(os.getenv('DB_SNAPSHOT_RETENTION_WEEKLY_WEEKS', '8'))
+
+CELERY_BEAT_SCHEDULE = {
+    'snapshot_sqlite_database_hourly': {
+        'task': 'storage.backup_tasks.snapshot_sqlite_database',
+        'schedule': crontab(minute=0),
+    },
+}
 
 # Media/video processing
 VIDEO_PROCESSING_ENABLED = os.getenv('VIDEO_PROCESSING_ENABLED', 'true').lower() == 'true'
