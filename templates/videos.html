@@ -74,6 +74,8 @@
                         </a>
                       </th>
                     {% endwith %}
+                    <th scope="col">Size</th>
+                    <th scope="col">Duration</th>
                     {% with option=sorting.options.uploaded_at %}
                       <th scope="col">
                         <a href="{{ option.url }}" class="text-decoration-none text-reset d-inline-flex align-items-center gap-1">
@@ -104,6 +106,8 @@
                       </td>
                       <td>{{ video.bucket }}</td>
                       <td>{{ video.status }}</td>
+                      <td>{{ video.size_display }}</td>
+                      <td>{{ video.duration_display }}</td>
                       <td>{{ video.uploaded_at|date:"Y-m-d H:i" }}</td>
                       <td class="d-flex gap-2">
                         {% if video.can_play %}
